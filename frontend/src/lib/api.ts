@@ -47,16 +47,16 @@ export default api;
 
 // --- Auth ---
 export const login = (data: { username: string; password: string }) =>
-  api.post("/api/auth/auth/login", data);
+  api.post("/api/auth/login", data);
 
 export const register = (data: {
   username: string;
   email: string;
   password: string;
   full_name?: string;
-}) => api.post("/api/auth/auth/register", data);
+}) => api.post("/api/auth/register", data);
 
-export const getMe = () => api.get("/api/auth/auth/me");
+export const getMe = () => api.get("/api/auth/me");
 
 // --- Courses ---
 export const getCourses = (params?: { skip?: number; limit?: number }) =>
@@ -139,9 +139,20 @@ export const generateTimetable = (data: {
   sections?: number[];
   rooms?: number[];
   faculty?: number[];
+  courses?: number[];
+  department?: string;
+  semester?: string;
+  time_start?: string;
+  time_end?: string;
+  num_sections?: number;
+  num_rooms?: number;
   optimize?: boolean;
   max_iterations?: number;
 }) => api.post("/api/v1/timetable/generate", data);
+
+// --- Departments & Semesters ---
+export const getDepartments = () => api.get("/api/v1/departments");
+export const getSemesters = () => api.get("/api/v1/semesters");
 
 // --- Timetables ---
 export const getTimetables = (params?: { skip?: number; limit?: number }) =>

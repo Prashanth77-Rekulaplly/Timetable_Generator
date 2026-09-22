@@ -117,6 +117,7 @@ class CourseUpdate(BaseModel):
 
 class CourseOut(CourseBase, TimestampMixin):
     id: int
+    faculty: Optional[FacultyOut] = None
     class Config:
         from_attributes = True
 
@@ -141,6 +142,7 @@ class SectionUpdate(BaseModel):
 
 class SectionOut(SectionBase, TimestampMixin):
     id: int
+    course: Optional[CourseOut] = None
     class Config:
         from_attributes = True
 
@@ -310,6 +312,11 @@ class TimetableEntryUpdate(BaseModel):
 class TimetableEntryOut(TimetableEntryBase, TimestampMixin):
     id: int
     timetable_id: int
+    course: Optional[CourseOut] = None
+    section: Optional[SectionOut] = None
+    room: Optional[RoomOut] = None
+    time_slot: Optional[TimeSlotOut] = None
+    faculty: Optional[FacultyOut] = None
     class Config:
         from_attributes = True
 
@@ -320,6 +327,13 @@ class GenerateTimetableRequest(BaseModel):
     sections: Optional[List[int]] = None  # filter by section IDs
     rooms: Optional[List[int]] = None  # filter by room IDs
     faculty: Optional[List[int]] = None  # filter by faculty IDs
+    courses: Optional[List[int]] = None  # filter by course/subject IDs
+    department: Optional[str] = None  # filter by department
+    semester: Optional[str] = None  # filter by semester
+    time_start: Optional[str] = None  # filter time slots start time (HH:MM)
+    time_end: Optional[str] = None  # filter time slots end time (HH:MM)
+    num_sections: Optional[int] = None  # number of sections to generate for
+    num_rooms: Optional[int] = None  # number of rooms required per section
     optimize: bool = True
     max_iterations: int = 1000
 

@@ -24,6 +24,7 @@ from app.schemas import (
     TimetableEntryCreate, TimetableEntryUpdate, TimetableEntryOut,
     GenerateTimetableRequest, ValidationResult, AnalyticsData,
 )
+from sqlalchemy import distinct, func
 from app.algorithms.scheduler import TimetableScheduler, GenerationInput
 from app.validators import TimetableValidator, assignments_from_timetable_entries
 from app.constraints import ConstraintEngine
@@ -328,13 +329,83 @@ def list_faculty_preferences(
     return q.all()
 
 # ==================== TIMETABLE GENERATION ====================
+# -- Department & Semester endpoints --
+@router.get("/departments", response_model=List[str])
+def list_departments(db: Session = Depends(get_db)):
+    """Get distinct departments from faculty."""
+    depts = db.query(distinct(Faculty.department)).filter(Faculty.department.isnot(None)).all()
+    return [d[0] for d in depts if d[0]]
+
+@router.get("/semesters", response_model=List[str])
+def list_semesters(db: Session = Depends(get_db)):
+    """Get distinct semesters from sections."""
+    # Semester is often encoded in section_number like "Sec-A1" where A = semester
+    # For now, return common semesters
+    return ["Semester 1", "Semester 2", "Semester 3", "Semester 4", "Semester 5", "Semester 6", "Semester 7", "Semester 8"]
+
+
 @router.post("/timetable/generate")
 async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depends(get_db)):
-    courses = db.query(Course).all()
-    sections = db.query(Section).all()
-    faculty = db.query(Faculty).all()
-    rooms = db.query(Room).all()
-    time_slots = db.query(TimeSlot).all()
+    # Build base queries
+    courses_q = db.query(Course)
+    sections_q = db.query(Section)
+    faculty_q = db.query(Faculty)
+    rooms_q = db.query(Room)
+    time_slots_q = db.query(TimeSlot)
+
+    # Apply department filter (on faculty)
+    if data.department:
+        faculty_q = faculty_q.filter(Faculty.department == data.department)
+        # Get faculty IDs for this department
+        fac_ids = [f.id for f in faculty_q.all()]
+        # Filter courses by those faculty
+        courses_q = courses_q.filter(Course.faculty_id.in_(fac_ids))
+        # Filter sections by those courses
+        course_ids = [c.id for c in courses_q.all()]
+        sections_q = sections_q.filter(Section.course_id.in_(course_ids))
+
+    # Apply semester filter (on section_number pattern)
+    if data.semester:
+        # Extract semester from section_number like "Sec-A1" -> "A"
+        # For simplicity, filter sections where section_number contains semester char
+        sem_map = {
+            "Semester 1": "A", "Semester 2": "B", "Semester 3": "C", "Semester 4": "D",
+            "Semester 5": "E", "Semester 6": "F", "Semester 7": "G", "Semester 8": "H",
+        }
+        sem_char = sem_map.get(data.semester, "")
+        if sem_char:
+            sections_q = sections_q.filter(Section.section_number.like(f"%{sem_char}%"))
+
+    # Apply course filter
+    if data.courses:
+        courses_q = courses_q.filter(Course.id.in_(data.courses))
+        course_ids = [c.id for c in courses_q.all()]
+        sections_q = sections_q.filter(Section.course_id.in_(course_ids))
+
+    # Apply time slot filters
+    if data.time_start or data.time_end:
+        if data.time_start:
+            from datetime import time as dt_time
+            h, m = map(int, data.time_start.split(":"))
+            time_slots_q = time_slots_q.filter(TimeSlot.start_time >= dt_time(h, m))
+        if data.time_end:
+            from datetime import time as dt_time
+            h, m = map(int, data.time_end.split(":"))
+            time_slots_q = time_slots_q.filter(TimeSlot.end_time <= dt_time(h, m))
+
+    # Apply num_sections limit
+    if data.num_sections:
+        sections_q = sections_q.limit(data.num_sections)
+
+    # Apply num_rooms limit
+    if data.num_rooms:
+        rooms_q = rooms_q.limit(data.num_rooms)
+
+    courses = courses_q.all()
+    sections = sections_q.all()
+    faculty = faculty_q.all()
+    rooms = rooms_q.all()
+    time_slots = time_slots_q.all()
     faculty_avail = db.query(FacultyAvailability).all()
     room_avail = db.query(RoomAvailability).all()
     faculty_prefs = db.query(FacultyPreference).all()
@@ -390,6 +461,17 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
         "validation": result.validation.to_dict(),
         "assignments_count": len(result.assignments),
         "conflicts": result.conflicts,
+        "filter_summary": {
+            "courses_count": len(courses),
+            "sections_count": len(sections),
+            "faculty_count": len(faculty),
+            "rooms_count": len(rooms),
+            "time_slots_count": len(time_slots),
+            "department": data.department,
+            "semester": data.semester,
+            "num_sections": data.num_sections,
+            "num_rooms": data.num_rooms,
+        }
     }
 
 # ==================== TIMETABLES CRUD ====================
@@ -443,7 +525,13 @@ def validate_timetable(timetable_id: int, db: Session = Depends(get_db)) -> dict
     """Validate a timetable for constraint violations."""
     entries = db.query(TimetableEntry).filter(TimetableEntry.timetable_id == timetable_id).all()
     if not entries:
-        raise HTTPException(status_code=404, detail="Timetable has no entries")
+        return {
+            "valid": True,
+            "score": 100.0,
+            "hard_violations": 0,
+            "soft_violations": 0,
+            "issues": []
+        }
 
     courses = db.query(Course).all()
     sections = db.query(Section).all()

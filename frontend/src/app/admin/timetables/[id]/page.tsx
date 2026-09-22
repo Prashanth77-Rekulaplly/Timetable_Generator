@@ -35,6 +35,7 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 import { dayShort, dayName, formatTime, scoreColor } from "@/lib/utils";
+import { Course, Faculty, Room, Section, TimeSlot, TimetableEntry } from "@/lib/types";
 
 type ViewMode = "master" | "faculty" | "section" | "room";
 type Tab = "grid" | "list" | "analytics" | "conflicts";
@@ -53,20 +54,20 @@ export default function TimetableDetailPage() {
     queryFn: () => getTimetable(id).then((r) => r.data),
   });
 
-  const { data: entries, isLoading: loadingE } = useQuery({
+  const { data: entries, isLoading: loadingE } = useQuery<TimetableEntry[]>({
     queryKey: ["timetable-entries", id],
     queryFn: () => getTimetableEntries(id).then((r) => r.data),
   });
 
-  const { data: timeSlots } = useQuery({
+  const { data: timeSlots } = useQuery<TimeSlot[]>({
     queryKey: ["time-slots"],
     queryFn: () => getTimeSlots({ limit: 300 }).then((r) => r.data),
   });
 
-  const { data: courses } = useQuery({ queryKey: ["courses"], queryFn: () => getCourses({ limit: 200 }).then((r) => r.data) });
-  const { data: faculty } = useQuery({ queryKey: ["faculty"], queryFn: () => getFaculty({ limit: 200 }).then((r) => r.data) });
-  const { data: rooms } = useQuery({ queryKey: ["rooms"], queryFn: () => getRooms({ limit: 200 }).then((r) => r.data) });
-  const { data: sections } = useQuery({ queryKey: ["sections"], queryFn: () => getSections({ limit: 200 }).then((r) => r.data) });
+  const { data: courses } = useQuery<Course[]>({ queryKey: ["courses"], queryFn: () => getCourses({ limit: 200 }).then((r) => r.data) });
+  const { data: faculty } = useQuery<Faculty[]>({ queryKey: ["faculty"], queryFn: () => getFaculty({ limit: 200 }).then((r) => r.data) });
+  const { data: rooms } = useQuery<Room[]>({ queryKey: ["rooms"], queryFn: () => getRooms({ limit: 200 }).then((r) => r.data) });
+  const { data: sections } = useQuery<Section[]>({ queryKey: ["sections"], queryFn: () => getSections({ limit: 200 }).then((r) => r.data) });
 
   const { data: analytics } = useQuery({
     queryKey: ["analytics", id],
@@ -352,13 +353,13 @@ export default function TimetableDetailPage() {
 }
 
 interface GridProps {
-  entries: Array<{ id: number; course_id: number; section_id: number; room_id: number; time_slot_id: number; faculty_id: number; entry_type: string }>;
-  timeSlots: Array<{ id: number; day_of_week: number; start_time: string; end_time: string; is_break: boolean }>;
+  entries: TimetableEntry[];
+  timeSlots: TimeSlot[];
   view: ViewMode;
-  courseMap: Map<number, { code: string; name: string }>;
-  facultyMap: Map<number, { name: string }>;
-  roomMap: Map<number, { room_number: string; building?: string }>;
-  sectionMap: Map<number, { section_number: string }>;
+  courseMap: Map<number, Course>;
+  facultyMap: Map<number, Faculty>;
+  roomMap: Map<number, Room>;
+  sectionMap: Map<number, Section>;
   days: number[];
 }
 

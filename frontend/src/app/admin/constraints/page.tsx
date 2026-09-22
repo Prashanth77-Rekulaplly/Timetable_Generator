@@ -11,7 +11,7 @@ import { LoadingState, ErrorState } from "@/components/States";
 import { useToast } from "@/components/Toast";
 import { Settings, Plus, Pencil, Trash2 } from "lucide-react";
 
-interface Constraint {
+interface Constraint extends Record<string, unknown> {
   id: number;
   name: string;
   description?: string;
@@ -39,7 +39,7 @@ export default function ConstraintsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
 
-  const { data: constraints, isLoading, error, refetch } = useQuery({
+  const { data: constraints, isLoading, error, refetch } = useQuery<Constraint[]>({
     queryKey: ["constraints"],
     queryFn: () => api.get("/api/v1/constraints").then((r) => r.data),
   });
@@ -80,16 +80,18 @@ export default function ConstraintsPage() {
     <AppShell>
       <PageHeader title="Constraints" description="Define and manage scheduling rules" icon={<Settings className="h-5 w-5" />} actions={<button onClick={() => { setEditing(null); setForm(emptyForm); setShowForm(true); }} className="btn-primary"><Plus className="h-4 w-4" /><span>Add Constraint</span></button>} />
       {isLoading ? <LoadingState message="Loading constraints..." /> : (
-        <DataTable columns={[
+        <DataTable<Constraint> columns={[
           { key: "name", header: "Name", render: (r: Constraint) => <span className="font-semibold text-ink-900">{r.name}</span> },
           { key: "description", header: "Description", render: (r: Constraint) => r.description ?? <span className="text-ink-400">—</span> },
           { key: "constraint_type", header: "Type", render: (r: Constraint) => <Badge variant={r.constraint_type === "hard" ? "danger" : "warning"}>{r.constraint_type}</Badge> },
           { key: "priority", header: "Priority", render: (r: Constraint) => r.priority },
           { key: "is_required", header: "Required", render: (r: Constraint) => <Badge variant={r.is_required ? "info" : "neutral"}>{r.is_required ? "Yes" : "No"}</Badge> },
-          { key: "actions", header: "", render: (r: Constraint) => <div className="flex items-center justify-end gap-1">
-            <button onClick={(e) => { e.stopPropagation(); openEdit(r); }} className="p-1.5 rounded-md text-ink-500 hover:text-brand-600 hover:bg-brand-50 transition"><Pencil className="h-4 w-4" /></button>
-            <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete ${r.name}?`)) remove.mutate(r.id); }} className="p-1.5 rounded-md text-ink-500 hover:text-red-600 hover:bg-red-50 transition"><Trash2 className="h-4 w-4" /></button>
-          </div>, className: "text-right w-24" },
+          {
+            key: "actions", header: "", render: (r: Constraint) => <div className="flex items-center justify-end gap-1">
+              <button onClick={(e) => { e.stopPropagation(); openEdit(r); }} className="p-1.5 rounded-md text-ink-500 hover:text-brand-600 hover:bg-brand-50 transition"><Pencil className="h-4 w-4" /></button>
+              <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete ${r.name}?`)) remove.mutate(r.id); }} className="p-1.5 rounded-md text-ink-500 hover:text-red-600 hover:bg-red-50 transition"><Trash2 className="h-4 w-4" /></button>
+            </div>, className: "text-right w-24"
+          },
         ]} data={constraints ?? []} emptyMessage="No constraints defined yet." />
       )}
       <Modal open={showForm} onClose={closeForm} title={editing ? "Edit Constraint" : "Add Constraint"}>

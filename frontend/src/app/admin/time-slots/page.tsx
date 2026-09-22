@@ -79,13 +79,13 @@ export default function TimeSlotsPage() {
     <AppShell>
       <PageHeader title="Time Slots" description="Configure the weekly schedule grid" icon={<Clock className="h-5 w-5" />} actions={<button onClick={() => { setEditing(null); setForm(emptyForm); setShowForm(true); }} className="btn-primary"><Plus className="h-4 w-4" /><span>Add Time Slot</span></button>} />
       {isLoading ? <LoadingState message="Loading time slots..." /> : (
-        <DataTable columns={[
-          { key: "day", header: "Day", render: (r) => <Badge variant="neutral">{dayShort(r.day_of_week)}</Badge> },
-          { key: "start", header: "Start", render: (r) => <span className="font-mono text-ink-700">{String(r.start_time).slice(0, 5)}</span> },
-          { key: "end", header: "End", render: (r) => <span className="font-mono text-ink-700">{String(r.end_time).slice(0, 5)}</span> },
-          { key: "type", header: "Type", render: (r) => r.is_break ? <Badge variant="warning"><Coffee className="h-3 w-3 mr-1" />Break</Badge> : <Badge variant="info">Class</Badge> },
-          { key: "label", header: "Label", render: (r) => r.label || <span className="text-ink-400">—</span> },
-          { key: "actions", header: "", render: (r) => <div className="flex items-center justify-end gap-1">
+        <DataTable<TimeSlot> columns={[
+          { key: "day", header: "Day", render: (r: TimeSlot) => <Badge variant="neutral">{dayShort(r.day_of_week)}</Badge> },
+          { key: "start", header: "Start", render: (r: TimeSlot) => <span className="font-mono text-ink-700">{String(r.start_time).slice(0, 5)}</span> },
+          { key: "end", header: "End", render: (r: TimeSlot) => <span className="font-mono text-ink-700">{String(r.end_time).slice(0, 5)}</span> },
+          { key: "type", header: "Type", render: (r: TimeSlot) => r.is_break ? <Badge variant="warning"><Coffee className="h-3 w-3 mr-1" />Break</Badge> : <Badge variant="info">Class</Badge> },
+          { key: "label", header: "Label", render: (r: TimeSlot) => r.label || <span className="text-ink-400">—</span> },
+          { key: "actions", header: "", render: (r: TimeSlot) => <div className="flex items-center justify-end gap-1">
             <button onClick={(e) => { e.stopPropagation(); openEdit(r); }} className="p-1.5 rounded-md text-ink-500 hover:text-brand-600 hover:bg-brand-50 transition"><Pencil className="h-4 w-4" /></button>
             <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete this time slot?`)) remove.mutate(r.id); }} className="p-1.5 rounded-md text-ink-500 hover:text-red-600 hover:bg-red-50 transition"><Trash2 className="h-4 w-4" /></button>
           </div>, className: "text-right w-24" },

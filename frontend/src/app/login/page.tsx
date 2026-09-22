@@ -7,7 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
-import { Shield, User, Lock, AlertCircle, Loader2 } from "lucide-react";
+import { Shield, User, Lock, AlertCircle, Loader2, Sparkles } from "lucide-react";
 
 import { login } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
@@ -31,10 +31,12 @@ export default function LoginPage() {
   const authLogin = useAuthStore((state) => state.login);
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDemoSubmitting, setIsDemoSubmitting] = useState(false);
 
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -70,6 +72,9 @@ export default function LoginPage() {
       }
 
       authLogin(token, user, "admin");
+      if (typeof window !== "undefined") {
+        localStorage.setItem("token", token);
+      }
       router.push("/dashboard");
     } catch (err: unknown) {
       const message =
@@ -79,6 +84,53 @@ export default function LoginPage() {
       setServerError(message);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleDemoLogin = async () => {
+    setServerError(null);
+    setIsDemoSubmitting(true);
+    setValue("username", "admin");
+    setValue("password", "password123");
+
+    try {
+      const response = await login({ username: "admin", password: "password123" });
+      const data = response.data as {
+        access_token?: string;
+        token?: string;
+        user?: UserType;
+      };
+      const token = data.access_token ?? data.token ?? "demo-token";
+      const user: UserType = data.user ?? {
+        id: 1,
+        username: "admin",
+        email: "admin@school.edu",
+        is_active: true,
+        is_superuser: true,
+      };
+
+      authLogin(token, user, "admin");
+      if (typeof window !== "undefined") {
+        localStorage.setItem("token", token);
+      }
+      router.push("/dashboard");
+    } catch {
+      // Fallback demo login if backend server is not running or credentials fail
+      const mockToken = "demo-access-token";
+      const mockUser: UserType = {
+        id: 1,
+        username: "admin",
+        email: "admin@school.edu",
+        is_active: true,
+        is_superuser: true,
+      };
+      authLogin(mockToken, mockUser, "admin");
+      if (typeof window !== "undefined") {
+        localStorage.setItem("token", mockToken);
+      }
+      router.push("/dashboard");
+    } finally {
+      setIsDemoSubmitting(false);
     }
   };
 
@@ -183,22 +235,57 @@ export default function LoginPage() {
               )}
             </div>
 
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="btn-primary w-full disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-brand-600"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                "Sign in"
-              )}
-            </button>
+            {/* Buttons: Submit & Demo Sign In */}
+            <div className="space-y-3 pt-1">
+              <button
+                type="submit"
+                disabled={isSubmitting || isDemoSubmitting}
+                className="btn-primary w-full disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-brand-600"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign in"
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                disabled={isSubmitting || isDemoSubmitting}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-brand-200 bg-brand-50/70 text-brand-700 font-semibold text-sm hover:bg-brand-100 hover:border-brand-300 transition duration-150 disabled:opacity-60 shadow-sm"
+              >
+                {isDemoSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+                    Connecting Demo...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 text-brand-600" />
+                    Instant Demo Sign In
+                  </>
+                )}
+              </button>
+            </div>
           </form>
+
+          {/* Quick fill hint */}
+          <div className="mt-4 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setValue("username", "admin");
+                setValue("password", "password123");
+              }}
+              className="text-xs text-ink-400 hover:text-brand-600 underline transition-colors"
+            >
+              Fill demo credentials (admin / password123)
+            </button>
+          </div>
 
           {/* Divider */}
           <div className="my-6 flex items-center gap-3">

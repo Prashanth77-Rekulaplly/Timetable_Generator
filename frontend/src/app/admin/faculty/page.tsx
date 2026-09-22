@@ -164,12 +164,12 @@ export default function FacultyPage() {
       {isLoading ? (
         <LoadingState message="Loading faculty..." />
       ) : (
-        <DataTable
+        <DataTable<Faculty>
           columns={[
             {
               key: "name",
               header: "Name",
-              render: (r) => (
+              render: (r: Faculty) => (
                 <div className="flex items-center gap-2.5">
                   <div className="h-8 w-8 rounded-full bg-gradient-to-br from-brand-100 to-brand-200 text-brand-700 flex items-center justify-center text-xs font-bold">
                     {r.name[0]}
@@ -181,17 +181,17 @@ export default function FacultyPage() {
             {
               key: "department",
               header: "Department",
-              render: (r) => r.department ?? <span className="text-ink-400">—</span>,
+              render: (r: Faculty) => r.department ?? <span className="text-ink-400">—</span>,
             },
             {
               key: "email",
               header: "Email",
-              render: (r) => r.email ?? <span className="text-ink-400">—</span>,
+              render: (r: Faculty) => r.email ?? <span className="text-ink-400">—</span>,
             },
             {
               key: "is_full_time",
               header: "Type",
-              render: (r) => (
+              render: (r: Faculty) => (
                 <Badge variant={r.is_full_time ? "info" : "neutral"}>
                   {r.is_full_time ? "Full-time" : "Part-time"}
                 </Badge>
@@ -200,12 +200,12 @@ export default function FacultyPage() {
             {
               key: "max_hours_per_week",
               header: "Max Hours",
-              render: (r) => r.max_hours_per_week,
+              render: (r: Faculty) => r.max_hours_per_week,
             },
             {
               key: "actions",
               header: "",
-              render: (r) => (
+              render: (r: Faculty) => (
                 <div className="flex items-center justify-end gap-1">
                   <button
                     onClick={(e) => { e.stopPropagation(); openEdit(r); }}

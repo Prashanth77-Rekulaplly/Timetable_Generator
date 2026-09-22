@@ -183,19 +183,19 @@ export default function CoursesPage() {
       {isLoading ? (
         <LoadingState message="Loading courses..." />
       ) : (
-        <DataTable
+        <DataTable<Course>
           columns={[
-            { key: "code", header: "Code", render: (r) => <span className="font-semibold text-ink-900">{r.code}</span> },
+            { key: "code", header: "Code", render: (r: Course) => <span className="font-semibold text-ink-900">{String(r.code)}</span> },
             { key: "name", header: "Name" },
             {
               key: "credits",
               header: "Credits",
-              render: (r) => <span className="text-ink-600">{r.credits}</span>,
+              render: (r: Course) => <span className="text-ink-600">{r.credits}</span>,
             },
             {
               key: "is_lab",
               header: "Type",
-              render: (r) => (
+              render: (r: Course) => (
                 <Badge variant={r.is_lab ? "info" : "neutral"}>
                   {r.is_lab ? "Lab" : "Lecture"}
                 </Badge>
@@ -204,13 +204,13 @@ export default function CoursesPage() {
             {
               key: "faculty",
               header: "Faculty",
-              render: (r) =>
+              render: (r: Course) =>
                 r.faculty ? r.faculty.name : <span className="text-ink-400">—</span>,
             },
             {
               key: "default_periods_per_week",
               header: "Periods/wk",
-              render: (r) => r.default_periods_per_week,
+              render: (r: Course) => r.default_periods_per_week,
             },
             {
               key: "actions",

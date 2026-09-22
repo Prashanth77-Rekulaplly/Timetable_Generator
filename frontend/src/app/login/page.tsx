@@ -159,7 +159,7 @@ export default function LoginPage() {
               <Shield className="h-7 w-7" strokeWidth={2.25} />
             </motion.div>
             <h1 className="text-2xl font-bold text-ink-900 tracking-tight">
-              Welcome to Schedulr
+              Welcome to Schedule Designer
             </h1>
             <p className="text-sm text-ink-500 mt-1">
               Sign in to manage your timetables
@@ -309,7 +309,7 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-ink-400">
-          © {new Date().getFullYear()} Schedulr. All rights reserved.
+          © {new Date().getFullYear()} Schedule Designer. All rights reserved.
         </p>
       </motion.div>
     </div>

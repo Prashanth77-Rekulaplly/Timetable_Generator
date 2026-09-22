@@ -69,7 +69,7 @@ export function Sidebar() {
             <Shield className="h-5 w-5 text-white" />
           </div>
           <div>
-            <p className="text-base font-bold text-ink-900 leading-tight">Schedulr</p>
+            <p className="text-base font-bold text-ink-900 leading-tight">Schedule Designer</p>
             <p className="text-[10px] uppercase tracking-wider text-ink-500 font-medium">Timetable AI</p>
           </div>
         </Link>

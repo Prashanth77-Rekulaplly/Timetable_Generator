@@ -141,7 +141,7 @@ export default function RegisterPage() {
               Create your account
             </h1>
             <p className="text-sm text-ink-500 mt-1">
-              Get started with Schedulr in seconds
+              Get started with Schedule Designer in seconds
             </p>
           </div>
 
@@ -329,7 +329,7 @@ export default function RegisterPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-ink-400">
-          © {new Date().getFullYear()} Schedulr. All rights reserved.
+          © {new Date().getFullYear()} Schedule Designer. All rights reserved.
         </p>
       </motion.div>
     </div>

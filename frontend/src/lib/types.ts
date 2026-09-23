@@ -9,7 +9,7 @@ export interface User {
   updated_at?: string;
 }
 
-export interface Faculty {
+export interface Faculty extends Record<string, unknown> {
   id: number;
   name: string;
   department?: string;
@@ -20,7 +20,7 @@ export interface Faculty {
   updated_at?: string;
 }
 
-export interface Course {
+export interface Course extends Record<string, unknown> {
   id: number;
   code: string;
   name: string;
@@ -35,7 +35,7 @@ export interface Course {
   updated_at?: string;
 }
 
-export interface Section {
+export interface Section extends Record<string, unknown> {
   id: number;
   course_id: number;
   course?: Course;
@@ -48,7 +48,7 @@ export interface Section {
   updated_at?: string;
 }
 
-export interface Room {
+export interface Room extends Record<string, unknown> {
   id: number;
   room_number: string;
   building?: string;
@@ -60,7 +60,7 @@ export interface Room {
   updated_at?: string;
 }
 
-export interface TimeSlot {
+export interface TimeSlot extends Record<string, unknown> {
   id: number;
   day_of_week: number;
   start_time: string;
@@ -71,7 +71,7 @@ export interface TimeSlot {
   updated_at?: string;
 }
 
-export interface Constraint {
+export interface Constraint extends Record<string, unknown> {
   id: number;
   name: string;
   description?: string;
@@ -90,7 +90,7 @@ export interface FacultyAvailability {
   is_available: boolean;
 }
 
-export interface Timetable {
+export interface Timetable extends Record<string, unknown> {
   id: number;
   name: string;
   user_id?: number;
@@ -178,3 +178,64 @@ export interface TimetableEntryFormatted {
 }
 
 export type Role = "admin" | "faculty" | "student";
+
+// ---------------------------------------------------------------------------
+// Institutional timetable rendering model
+// ---------------------------------------------------------------------------
+
+export type TimetableCellType = "CLASS" | "LAB" | "BREAK" | "EMPTY";
+
+export interface BatchAssignment {
+  batch: string;
+  courseId?: number;
+  courseShortCode?: string;
+  facultyId?: number;
+  facultyInitials?: string;
+  roomId?: number;
+  roomName?: string;
+}
+
+export interface TimetableCell {
+  day: string;
+  timeSlotId: number;
+  type: TimetableCellType;
+  courseId?: number;
+  courseCode?: string;
+  courseShortCode?: string;
+  courseName?: string;
+  facultyId?: number;
+  facultyName?: string;
+  facultyInitials?: string;
+  roomId?: number;
+  roomName?: string;
+  roomType?: string;
+  sectionId?: number;
+  sectionName?: string;
+  batch?: "A" | "B" | "ALL";
+  batchAssignments?: BatchAssignment[];
+  breakLabel?: string;
+}
+
+export interface TimetableMetadata {
+  universityName?: string;
+  departmentName?: string;
+  programName?: string;
+  semester?: string;
+  academicYear?: string;
+  sectionName?: string;
+  classCoordinator?: string;
+  coordinatorPhone?: string;
+  totalStudents?: number;
+  labBatchCount?: number;
+}
+
+export interface TimetableData {
+  metadata: TimetableMetadata;
+  days: string[];
+  timeSlots: TimeSlot[];
+  cells: TimetableCell[];
+  courses: Course[];
+  faculty: Faculty[];
+  rooms: Room[];
+  sections: Section[];
+}

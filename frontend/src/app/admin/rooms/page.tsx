@@ -75,13 +75,13 @@ export default function RoomsPage() {
         <input type="text" placeholder="Search rooms..." value={search} onChange={(e) => setSearch(e.target.value)} className="flex-1 bg-transparent text-sm focus:outline-none" />
       </div>
       {isLoading ? <LoadingState message="Loading rooms..." /> : (
-        <DataTable columns={[
-          { key: "room_number", header: "Room #", render: (r) => <span className="font-semibold text-ink-900">{r.room_number}</span> },
-          { key: "building", header: "Building", render: (r) => r.building ?? <span className="text-ink-400">—</span> },
-          { key: "capacity", header: "Capacity", render: (r) => r.capacity },
-          { key: "room_type", header: "Type", render: (r) => <Badge variant={r.room_type === "lab" ? "info" : "neutral"} className="capitalize">{r.room_type || "—"}</Badge> },
-          { key: "features", header: "Features", render: (r) => <div className="flex items-center gap-2">{r.has_projector && <span className="inline-flex items-center gap-1 text-xs text-ink-600"><Projector className="h-3.5 w-3.5" /> Projector</span>}{r.has_computer && <span className="inline-flex items-center gap-1 text-xs text-ink-600"><Cpu className="h-3.5 w-3.5" /> Computer</span>}{!r.has_projector && !r.has_computer && <span className="text-ink-400 text-xs">—</span>}</div> },
-          { key: "actions", header: "", render: (r) => <div className="flex items-center justify-end gap-1">
+        <DataTable<Room> columns={[
+          { key: "room_number", header: "Room #", render: (r: Room) => <span className="font-semibold text-ink-900">{r.room_number}</span> },
+          { key: "building", header: "Building", render: (r: Room) => r.building ?? <span className="text-ink-400">—</span> },
+          { key: "capacity", header: "Capacity", render: (r: Room) => r.capacity },
+          { key: "room_type", header: "Type", render: (r: Room) => <Badge variant={r.room_type === "lab" ? "info" : "neutral"} className="capitalize">{r.room_type || "—"}</Badge> },
+          { key: "features", header: "Features", render: (r: Room) => <div className="flex items-center gap-2">{r.has_projector && <span className="inline-flex items-center gap-1 text-xs text-ink-600"><Projector className="h-3.5 w-3.5" /> Projector</span>}{r.has_computer && <span className="inline-flex items-center gap-1 text-xs text-ink-600"><Cpu className="h-3.5 w-3.5" /> Computer</span>}{!r.has_projector && !r.has_computer && <span className="text-ink-400 text-xs">—</span>}</div> },
+          { key: "actions", header: "", render: (r: Room) => <div className="flex items-center justify-end gap-1">
             <button onClick={(e) => { e.stopPropagation(); openEdit(r); }} className="p-1.5 rounded-md text-ink-500 hover:text-brand-600 hover:bg-brand-50 transition"><Pencil className="h-4 w-4" /></button>
             <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete ${r.room_number}?`)) remove.mutate(r.id); }} className="p-1.5 rounded-md text-ink-500 hover:text-red-600 hover:bg-red-50 transition"><Trash2 className="h-4 w-4" /></button>
           </div>, className: "text-right w-24" },

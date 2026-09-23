@@ -102,13 +102,13 @@ export default function SectionsPage() {
         <input type="text" placeholder="Search sections..." value={search} onChange={(e) => setSearch(e.target.value)} className="flex-1 bg-transparent text-sm focus:outline-none" />
       </div>
       {isLoading ? <LoadingState message="Loading sections..." /> : (
-        <DataTable columns={[
-          { key: "section_number", header: "Section", render: (r) => <span className="font-semibold text-ink-900">{r.section_number}</span> },
-          { key: "course", header: "Course", render: (r) => r.course ? <span>{r.course.code} — {r.course.name}</span> : <span className="text-ink-400">—</span> },
-          { key: "capacity", header: "Capacity", render: (r) => <span>{r.current_enrollment} / {r.capacity}</span> },
-          { key: "periods_per_week", header: "Periods/wk", render: (r) => r.periods_per_week },
-          { key: "requires_lab", header: "Lab?", render: (r) => <Badge variant={r.requires_lab ? "info" : "neutral"}>{r.requires_lab ? "Yes" : "No"}</Badge> },
-          { key: "actions", header: "", render: (r) => <div className="flex items-center justify-end gap-1">
+        <DataTable<Section> columns={[
+          { key: "section_number", header: "Section", render: (r: Section) => <span className="font-semibold text-ink-900">{r.section_number}</span> },
+          { key: "course", header: "Course", render: (r: Section) => r.course ? <span>{r.course.code} — {r.course.name}</span> : <span className="text-ink-400">—</span> },
+          { key: "capacity", header: "Capacity", render: (r: Section) => <span>{r.current_enrollment} / {r.capacity}</span> },
+          { key: "periods_per_week", header: "Periods/wk", render: (r: Section) => r.periods_per_week },
+          { key: "requires_lab", header: "Lab?", render: (r: Section) => <Badge variant={r.requires_lab ? "info" : "neutral"}>{r.requires_lab ? "Yes" : "No"}</Badge> },
+          { key: "actions", header: "", render: (r: Section) => <div className="flex items-center justify-end gap-1">
             <button onClick={(e) => { e.stopPropagation(); openEdit(r); }} className="p-1.5 rounded-md text-ink-500 hover:text-brand-600 hover:bg-brand-50 transition"><Pencil className="h-4 w-4" /></button>
             <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete ${r.section_number}?`)) remove.mutate(r.id); }} className="p-1.5 rounded-md text-ink-500 hover:text-red-600 hover:bg-red-50 transition"><Trash2 className="h-4 w-4" /></button>
           </div>, className: "text-right w-24" },

@@ -9,7 +9,7 @@ from app.config import settings
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Timetable Generator API",
+        title="Schedule Designer API",
         description="Backend for Automated Timetable Generator Using Graph Coloring Algorithm",
         version="0.1.0",
         docs_url="/docs",
@@ -31,7 +31,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", include_in_schema=False)
     async def health():
-        return {"status": "ok", "service": "timetable-generator"}
+        return {"status": "ok", "service": "schedule-designer"}
 
     @app.on_event("startup")
     async def on_startup():
@@ -39,9 +39,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def on_shutdown():
-        await engine.dispose()
-        if AsyncSessionLocal.bind:
-            await AsyncSessionLocal.bind.close()
+        engine.dispose()
 
     return app
 

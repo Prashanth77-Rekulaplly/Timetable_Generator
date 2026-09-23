@@ -33,3 +33,14 @@ export function scoreBg(score: number): string {
   if (score >= 60) return "bg-amber-50 text-amber-700 border-amber-200";
   return "bg-red-50 text-red-700 border-red-200";
 }
+
+export function getFacultyInitials(name: string | undefined): string {
+  if (!name) return "—";
+  // Strip titles like Prof., Dr., Mr., Mrs., Ms.
+  const cleanName = name.replace(/^(Prof\.|Dr\.|Mr\.|Mrs\.|Ms\.|Prof\s+\(Dr\.\))\s+/i, "").trim();
+  const parts = cleanName.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return name.slice(0, 3).toUpperCase();
+  if (parts.length === 1) return parts[0].slice(0, 3).toUpperCase();
+  return parts.map((p) => p[0].toUpperCase()).join("");
+}
+

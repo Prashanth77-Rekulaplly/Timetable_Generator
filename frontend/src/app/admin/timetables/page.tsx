@@ -99,7 +99,7 @@ export default function TimetablesPage() {
           }
         />
       ) : (
-        <DataTable
+        <DataTable<Timetable>
           columns={[
             {
               key: "name",

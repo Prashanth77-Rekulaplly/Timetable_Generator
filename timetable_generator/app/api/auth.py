@@ -10,7 +10,7 @@ from app.security import hash_password, verify_password, create_access_token, de
 from app.config import settings
 from datetime import timedelta
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(tags=["Authentication"])
 
 def get_current_user(token: str = Depends(lambda: None), db: Session = Depends(get_db)):
     # Simplified - in real app use OAuth2PasswordBearer

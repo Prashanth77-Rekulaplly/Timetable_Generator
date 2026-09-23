@@ -4,7 +4,7 @@ import { Providers } from "@/lib/providers";
 import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
-  title: "Schedulr — Automated Timetable Generator",
+  title: "Schedule Designer — Automated Timetable Generator",
   description:
     "An automated timetable generator using graph coloring algorithms",
 };

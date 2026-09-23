@@ -334,6 +334,7 @@ def seed_constraints(db):
 
 def seed_all():
     """Run all seeding."""
+    Base.metadata.drop_all(bind=engine)
     init_db()
 
     db = SessionLocal()

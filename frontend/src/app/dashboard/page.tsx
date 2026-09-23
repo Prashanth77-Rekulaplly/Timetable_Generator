@@ -181,9 +181,9 @@ export default function DashboardPage() {
       const id = (res.data as { timetable_id?: number })?.timetable_id;
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       if (id) {
-        router.push(`/timetables/${id}`);
+        router.push(`/admin/timetables/${id}`);
       } else {
-        router.push("/timetables");
+        router.push("/admin/timetables");
       }
     } catch (e) {
       // Surface error inline; user can navigate manually
@@ -216,7 +216,7 @@ export default function DashboardPage() {
               />
               Refresh
             </button>
-            <Link href="/timetables/generate" className="btn-primary inline-flex items-center gap-2">
+            <Link href="/admin/generate" className="btn-primary inline-flex items-center gap-2">
               <Sparkles className="h-4 w-4" />
               Generate Timetable
             </Link>
@@ -312,7 +312,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <Link
-                  href="/timetables"
+                  href="/admin/timetables"
                   className="text-xs font-medium text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"
                 >
                   View all
@@ -332,7 +332,7 @@ export default function DashboardPage() {
                     description="Get started by generating your first timetable from the available courses, faculty, and rooms."
                     action={
                       <Link
-                        href="/timetables/generate"
+                        href="/admin/generate"
                         className="btn-primary inline-flex items-center gap-2"
                       >
                         <Sparkles className="h-4 w-4" />
@@ -388,7 +388,7 @@ export default function DashboardPage() {
                         className: "text-right",
                         render: (row) => (
                           <Link
-                            href={`/timetables/${row.id}`}
+                            href={`/admin/timetables/${row.id}`}
                             className="text-brand-600 hover:text-brand-700 inline-flex items-center gap-1 text-sm font-medium"
                           >
                             Open
@@ -398,7 +398,7 @@ export default function DashboardPage() {
                       },
                     ]}
                     data={recentTimetables}
-                    onRowClick={(row) => router.push(`/timetables/${row.id}`)}
+                    onRowClick={(row) => router.push(`/admin/timetables/${row.id}`)}
                   />
                 )}
               </div>
@@ -421,38 +421,38 @@ export default function DashboardPage() {
                 </div>
                 <div className="p-3 space-y-1.5">
                   <QuickAction
-                    href="/timetables/generate"
+                    href="/admin/generate"
                     icon={<Sparkles className="h-4 w-4" />}
                     title="Generate Timetable"
                     description="Create a new schedule"
                     onClick={handleQuickGenerate}
                   />
                   <QuickAction
-                    href="/courses"
+                    href="/admin/courses"
                     icon={<Plus className="h-4 w-4" />}
                     title="Manage Courses"
                     description="Add or edit courses"
                   />
                   <QuickAction
-                    href="/faculty"
+                    href="/admin/faculty"
                     icon={<Users className="h-4 w-4" />}
                     title="Manage Faculty"
                     description="Update teaching staff"
                   />
                   <QuickAction
-                    href="/rooms"
+                    href="/admin/rooms"
                     icon={<Building2 className="h-4 w-4" />}
                     title="Manage Rooms"
                     description="Configure rooms & labs"
                   />
                   <QuickAction
-                    href="/time-slots"
+                    href="/admin/time-slots"
                     icon={<Clock className="h-4 w-4" />}
                     title="Configure Time Slots"
                     description="Set periods and breaks"
                   />
                   <QuickAction
-                    href="/sections"
+                    href="/admin/sections"
                     icon={<Layers className="h-4 w-4" />}
                     title="Manage Sections"
                     description="Organize class groups"
@@ -475,7 +475,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <Link
-                    href="/analytics"
+                    href="/admin/analytics"
                     className="text-xs font-medium text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"
                   >
                     Details

@@ -35,9 +35,12 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 import { dayShort, dayName, formatTime, scoreColor } from "@/lib/utils";
+import { Course, Faculty, Room, Section, TimeSlot, TimetableEntry } from "@/lib/types";
+import { InstitutionalTimetableSheet } from "@/components/InstitutionalTimetableSheet";
+import { FileText } from "lucide-react";
 
 type ViewMode = "master" | "faculty" | "section" | "room";
-type Tab = "grid" | "list" | "analytics" | "conflicts";
+type Tab = "institutional" | "grid" | "list" | "analytics" | "conflicts";
 
 export default function TimetableDetailPage() {
   const params = useParams();
@@ -46,27 +49,27 @@ export default function TimetableDetailPage() {
   const toast = useToast();
   const id = Number(params.id);
   const [view, setView] = useState<ViewMode>("master");
-  const [tab, setTab] = useState<Tab>("grid");
+  const [tab, setTab] = useState<Tab>("institutional");
 
   const { data: timetable, isLoading: loadingTT, error: errorTT, refetch: refetchTT } = useQuery({
     queryKey: ["timetable", id],
     queryFn: () => getTimetable(id).then((r) => r.data),
   });
 
-  const { data: entries, isLoading: loadingE } = useQuery({
+  const { data: entries, isLoading: loadingE } = useQuery<TimetableEntry[]>({
     queryKey: ["timetable-entries", id],
     queryFn: () => getTimetableEntries(id).then((r) => r.data),
   });
 
-  const { data: timeSlots } = useQuery({
+  const { data: timeSlots } = useQuery<TimeSlot[]>({
     queryKey: ["time-slots"],
     queryFn: () => getTimeSlots({ limit: 300 }).then((r) => r.data),
   });
 
-  const { data: courses } = useQuery({ queryKey: ["courses"], queryFn: () => getCourses({ limit: 200 }).then((r) => r.data) });
-  const { data: faculty } = useQuery({ queryKey: ["faculty"], queryFn: () => getFaculty({ limit: 200 }).then((r) => r.data) });
-  const { data: rooms } = useQuery({ queryKey: ["rooms"], queryFn: () => getRooms({ limit: 200 }).then((r) => r.data) });
-  const { data: sections } = useQuery({ queryKey: ["sections"], queryFn: () => getSections({ limit: 200 }).then((r) => r.data) });
+  const { data: courses } = useQuery<Course[]>({ queryKey: ["courses"], queryFn: () => getCourses({ limit: 200 }).then((r) => r.data) });
+  const { data: faculty } = useQuery<Faculty[]>({ queryKey: ["faculty"], queryFn: () => getFaculty({ limit: 200 }).then((r) => r.data) });
+  const { data: rooms } = useQuery<Room[]>({ queryKey: ["rooms"], queryFn: () => getRooms({ limit: 200 }).then((r) => r.data) });
+  const { data: sections } = useQuery<Section[]>({ queryKey: ["sections"], queryFn: () => getSections({ limit: 200 }).then((r) => r.data) });
 
   const { data: analytics } = useQuery({
     queryKey: ["analytics", id],
@@ -184,7 +187,8 @@ export default function TimetableDetailPage() {
       {/* Tabs */}
       <div className="border-b border-ink-100 mb-5 flex items-center gap-1 overflow-x-auto">
         {([
-          ["grid", "Schedule Grid", <Layers className="h-4 w-4" />],
+          ["institutional", "Institutional Sheet", <FileText className="h-4 w-4" />],
+          ["grid", "Interactive Grid", <Layers className="h-4 w-4" />],
           ["list", "List View", <ListChecks className="h-4 w-4" />],
           ["analytics", "Analytics", <BarChart3 className="h-4 w-4" />],
           ["conflicts", "Validation", <AlertTriangle className="h-4 w-4" />],
@@ -194,7 +198,7 @@ export default function TimetableDetailPage() {
             onClick={() => setTab(t)}
             className={`px-4 py-2.5 text-sm font-medium flex items-center gap-2 border-b-2 transition ${
               tab === t
-                ? "border-brand-600 text-brand-700"
+                ? "border-brand-600 text-brand-700 font-semibold"
                 : "border-transparent text-ink-500 hover:text-ink-900"
             }`}
           >
@@ -203,6 +207,20 @@ export default function TimetableDetailPage() {
           </button>
         ))}
       </div>
+
+      {/* Institutional Sheet tab */}
+      {tab === "institutional" && (
+        <InstitutionalTimetableSheet
+          entries={entries ?? []}
+          timeSlots={sortedSlots}
+          courses={courses ?? []}
+          faculty={faculty ?? []}
+          rooms={rooms ?? []}
+          sections={sections ?? []}
+          title={timetable.name}
+          subtitle={`Version ${timetable.version} • Department Schedule`}
+        />
+      )}
 
       {/* Grid tab */}
       {tab === "grid" && (
@@ -352,13 +370,13 @@ export default function TimetableDetailPage() {
 }
 
 interface GridProps {
-  entries: Array<{ id: number; course_id: number; section_id: number; room_id: number; time_slot_id: number; faculty_id: number; entry_type: string }>;
-  timeSlots: Array<{ id: number; day_of_week: number; start_time: string; end_time: string; is_break: boolean }>;
+  entries: TimetableEntry[];
+  timeSlots: TimeSlot[];
   view: ViewMode;
-  courseMap: Map<number, { code: string; name: string }>;
-  facultyMap: Map<number, { name: string }>;
-  roomMap: Map<number, { room_number: string; building?: string }>;
-  sectionMap: Map<number, { section_number: string }>;
+  courseMap: Map<number, Course>;
+  facultyMap: Map<number, Faculty>;
+  roomMap: Map<number, Room>;
+  sectionMap: Map<number, Section>;
   days: number[];
 }
 

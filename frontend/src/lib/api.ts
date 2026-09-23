@@ -154,6 +154,10 @@ export const generateTimetable = (data: {
 export const getDepartments = () => api.get("/api/v1/departments");
 export const getSemesters = () => api.get("/api/v1/semesters");
 
+// --- Institution metadata ---
+export const getInstitutionMetadata = () =>
+  api.get("/api/v1/institution-metadata");
+
 // --- Timetables ---
 export const getTimetables = (params?: { skip?: number; limit?: number }) =>
   api.get("/api/v1/timetables", { params });

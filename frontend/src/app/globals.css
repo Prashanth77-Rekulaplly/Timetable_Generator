@@ -123,3 +123,28 @@
 .timetable-header {
   @apply px-2 py-2 text-xs font-semibold text-ink-600 bg-ink-50 text-center;
 }
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  header, nav, aside, .print\:hidden {
+    display: none !important;
+  }
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .institutional-sheet {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+  table {
+    page-break-inside: avoid;
+  }
+}
+

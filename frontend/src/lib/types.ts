@@ -178,3 +178,64 @@ export interface TimetableEntryFormatted {
 }
 
 export type Role = "admin" | "faculty" | "student";
+
+// ---------------------------------------------------------------------------
+// Institutional timetable rendering model
+// ---------------------------------------------------------------------------
+
+export type TimetableCellType = "CLASS" | "LAB" | "BREAK" | "EMPTY";
+
+export interface BatchAssignment {
+  batch: string;
+  courseId?: number;
+  courseShortCode?: string;
+  facultyId?: number;
+  facultyInitials?: string;
+  roomId?: number;
+  roomName?: string;
+}
+
+export interface TimetableCell {
+  day: string;
+  timeSlotId: number;
+  type: TimetableCellType;
+  courseId?: number;
+  courseCode?: string;
+  courseShortCode?: string;
+  courseName?: string;
+  facultyId?: number;
+  facultyName?: string;
+  facultyInitials?: string;
+  roomId?: number;
+  roomName?: string;
+  roomType?: string;
+  sectionId?: number;
+  sectionName?: string;
+  batch?: "A" | "B" | "ALL";
+  batchAssignments?: BatchAssignment[];
+  breakLabel?: string;
+}
+
+export interface TimetableMetadata {
+  universityName?: string;
+  departmentName?: string;
+  programName?: string;
+  semester?: string;
+  academicYear?: string;
+  sectionName?: string;
+  classCoordinator?: string;
+  coordinatorPhone?: string;
+  totalStudents?: number;
+  labBatchCount?: number;
+}
+
+export interface TimetableData {
+  metadata: TimetableMetadata;
+  days: string[];
+  timeSlots: TimeSlot[];
+  cells: TimetableCell[];
+  courses: Course[];
+  faculty: Faculty[];
+  rooms: Room[];
+  sections: Section[];
+}

@@ -36,9 +36,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { dayShort, dayName, formatTime, scoreColor } from "@/lib/utils";
 import { Course, Faculty, Room, Section, TimeSlot, TimetableEntry } from "@/lib/types";
+import { InstitutionalTimetableSheet } from "@/components/InstitutionalTimetableSheet";
+import { FileText } from "lucide-react";
 
 type ViewMode = "master" | "faculty" | "section" | "room";
-type Tab = "grid" | "list" | "analytics" | "conflicts";
+type Tab = "institutional" | "grid" | "list" | "analytics" | "conflicts";
 
 export default function TimetableDetailPage() {
   const params = useParams();
@@ -47,7 +49,7 @@ export default function TimetableDetailPage() {
   const toast = useToast();
   const id = Number(params.id);
   const [view, setView] = useState<ViewMode>("master");
-  const [tab, setTab] = useState<Tab>("grid");
+  const [tab, setTab] = useState<Tab>("institutional");
 
   const { data: timetable, isLoading: loadingTT, error: errorTT, refetch: refetchTT } = useQuery({
     queryKey: ["timetable", id],
@@ -185,7 +187,8 @@ export default function TimetableDetailPage() {
       {/* Tabs */}
       <div className="border-b border-ink-100 mb-5 flex items-center gap-1 overflow-x-auto">
         {([
-          ["grid", "Schedule Grid", <Layers className="h-4 w-4" />],
+          ["institutional", "Institutional Sheet", <FileText className="h-4 w-4" />],
+          ["grid", "Interactive Grid", <Layers className="h-4 w-4" />],
           ["list", "List View", <ListChecks className="h-4 w-4" />],
           ["analytics", "Analytics", <BarChart3 className="h-4 w-4" />],
           ["conflicts", "Validation", <AlertTriangle className="h-4 w-4" />],
@@ -195,7 +198,7 @@ export default function TimetableDetailPage() {
             onClick={() => setTab(t)}
             className={`px-4 py-2.5 text-sm font-medium flex items-center gap-2 border-b-2 transition ${
               tab === t
-                ? "border-brand-600 text-brand-700"
+                ? "border-brand-600 text-brand-700 font-semibold"
                 : "border-transparent text-ink-500 hover:text-ink-900"
             }`}
           >
@@ -204,6 +207,20 @@ export default function TimetableDetailPage() {
           </button>
         ))}
       </div>
+
+      {/* Institutional Sheet tab */}
+      {tab === "institutional" && (
+        <InstitutionalTimetableSheet
+          entries={entries ?? []}
+          timeSlots={sortedSlots}
+          courses={courses ?? []}
+          faculty={faculty ?? []}
+          rooms={rooms ?? []}
+          sections={sections ?? []}
+          title={timetable.name}
+          subtitle={`Version ${timetable.version} • Department Schedule`}
+        />
+      )}
 
       {/* Grid tab */}
       {tab === "grid" && (

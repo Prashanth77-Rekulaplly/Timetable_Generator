@@ -1,10 +1,11 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/PageHeader";
 import { LoadingState, SuccessState, ErrorState } from "@/components/States";
+import { InstitutionalTimetableSheet } from "@/components/InstitutionalTimetableSheet";
 import { useToast } from "@/components/Toast";
 import {
   generateTimetable,
@@ -14,6 +15,7 @@ import {
   getFaculty,
   getRooms,
   getTimeSlots,
+  getSections,
   getTimetableEntries,
   getTimetable,
 } from "@/lib/api";
@@ -37,11 +39,15 @@ import {
   ArrowLeft,
   Layers,
   Save,
+  Eye,
+  Download,
+  Printer,
 } from "lucide-react";
 import { dayShort, dayName } from "@/lib/utils";
+import { Course, Faculty, Room, Section, TimeSlot } from "@/lib/types";
 
 // --- Types ---
-interface Course {
+interface CourseItem {
   id: number;
   code: string;
   name: string;
@@ -49,19 +55,19 @@ interface Course {
   faculty?: { name: string; department?: string };
 }
 
-interface Section {
+interface SectionItem {
   id: number;
   section_number: string;
 }
 
-interface Faculty {
+interface FacultyItem {
   id: number;
   name: string;
   department?: string;
   is_full_time: boolean;
 }
 
-interface Room {
+interface RoomItem {
   id: number;
   room_number: string;
   building?: string;
@@ -69,7 +75,7 @@ interface Room {
   room_type: string;
 }
 
-interface TimeSlot {
+interface TimeSlotItem {
   id: number;
   day_of_week: number;
   start_time: string;
@@ -188,14 +194,14 @@ export default function GeneratePage() {
   const [optimize, setOptimize] = useState(true);
   const [maxIterations, setMaxIterations] = useState(1000);
 
-  // Phase
-  type Phase = "form" | "generating" | "success" | "error" | "preview";
+  // Phase: form | validating | generating | success | error
+  type Phase = "form" | "validating" | "generating" | "success" | "error";
   const [phase, setPhase] = useState<Phase>("form");
   const [result, setResult] = useState<GenResult | null>(null);
   const [generatedId, setGeneratedId] = useState<number | null>(null);
 
   // Fetch lookup data
-  const { data: departments, isLoading: loadingDepts } = useQuery({
+  const { data: departments } = useQuery({
     queryKey: ["departments"],
     queryFn: () => getDepartments().then((r) => r.data),
   });
@@ -203,7 +209,7 @@ export default function GeneratePage() {
     queryKey: ["semesters"],
     queryFn: () => getSemesters().then((r) => r.data),
   });
-  const { data: coursesData, isLoading: loadingCourses } = useQuery({
+  const { data: coursesData } = useQuery({
     queryKey: ["courses"],
     queryFn: () => getCourses({ limit: 200 }).then((r) => r.data),
   });
@@ -219,11 +225,16 @@ export default function GeneratePage() {
     queryKey: ["time-slots"],
     queryFn: () => getTimeSlots({ limit: 300 }).then((r) => r.data),
   });
+  const { data: sectionsData } = useQuery({
+    queryKey: ["sections"],
+    queryFn: () => getSections({ limit: 200 }).then((r) => r.data),
+  });
 
-  const courses: Course[] = Array.isArray(coursesData) ? coursesData : [];
-  const faculties: Faculty[] = Array.isArray(facultyData) ? facultyData : [];
-  const rooms: Room[] = Array.isArray(roomsData) ? roomsData : [];
-  const timeSlots: TimeSlot[] = Array.isArray(timeSlotsData) ? timeSlotsData : [];
+  const courses: CourseItem[] = Array.isArray(coursesData) ? coursesData : [];
+  const faculties: FacultyItem[] = Array.isArray(facultyData) ? facultyData : [];
+  const rooms: RoomItem[] = Array.isArray(roomsData) ? roomsData : [];
+  const timeSlots: TimeSlotItem[] = Array.isArray(timeSlotsData) ? timeSlotsData : [];
+  const sections: SectionItem[] = Array.isArray(sectionsData) ? sectionsData : [];
 
   // Filtered courses by department + semester
   const filteredCourses = courses.filter((c) => {
@@ -231,7 +242,6 @@ export default function GeneratePage() {
     return true;
   });
 
-  // Filtered faculty by department
   const filteredFaculty = faculties.filter((f) => {
     if (department && f.department && !f.department.toLowerCase().includes(department.toLowerCase())) return false;
     return true;
@@ -279,47 +289,63 @@ export default function GeneratePage() {
     gen.mutate();
   };
 
-  // Preview timetable data
-  const { data: entriesData, isLoading: loadingEntries } = useQuery({
+  // Validate before generation without running solver
+  const handleValidate = () => {
+    setPhase("validating");
+  };
+
+  // Fetch entries after successful generation
+  const { data: entriesData } = useQuery({
     queryKey: ["timetable-entries", generatedId],
     queryFn: () => getTimetableEntries(generatedId!).then((r) => r.data),
     enabled: !!generatedId && phase === "success",
   });
 
-  const { data: timetableData } = useQuery({
-    queryKey: ["timetable", generatedId],
-    queryFn: () => getTimetable(generatedId!).then((r) => r.data),
-    enabled: !!generatedId && phase === "success",
-  });
+  // Preview timetable data (from form data, no assignments yet)
+  const previewTimetableData = useMemo(() => {
+    const selectedCourseObjs = selectedCourses
+      .map((id) => courses.find((c) => c.id === id))
+      .filter(Boolean) as CourseItem[];
 
-  // Build subject-grid for 6-day preview
-  const entries: Array<{
-    id: number; course_id: number; section_id: number; room_id: number;
-    time_slot_id: number; faculty_id: number; entry_type: string;
-    course?: Course; section?: Section; room?: Room; faculty?: Faculty; time_slot?: TimeSlot;
-  }> = entriesData ?? [];
+    const selectedFacultyObjs = selectedFaculty
+      .map((id) => faculties.find((f) => f.id === id))
+      .filter(Boolean) as FacultyItem[];
 
-  // Get unique subjects (courses) from entries
-  const subjectMap = new Map<number, Course>();
-  entries.forEach((e) => {
-    if (e.course && !subjectMap.has(e.course.id)) {
-      subjectMap.set(e.course.id, e.course);
-    }
-  });
-  const subjects = Array.from(subjectMap.values());
+    const selectedSectionObjs = sections;
 
-  // Build grid: subjects × days → time range
-  const gridData: Record<string, Record<string, string>> = {};
-  entries.forEach((e) => {
-    const ts = e.time_slot;
-    if (!ts) return;
-    const dayKey = DAYS[ts.day_of_week];
-    const subjKey = String(e.course_id);
-    if (!gridData[subjKey]) gridData[subjKey] = {};
-    const existing = gridData[subjKey][dayKey] || "";
-    const timeStr = `${String(ts.start_time).slice(0, 5)}-${String(ts.end_time).slice(0, 5)}`;
-    gridData[subjKey][dayKey] = existing ? `${existing}, ${timeStr}` : timeStr;
-  });
+    const metadata = {
+      universityName: undefined,
+      departmentName: department ? department.toUpperCase() : undefined,
+      semester: semester ? `SEMESTER ${semester}` : undefined,
+      academicYear: undefined,
+      classCoordinator: undefined,
+      coordinatorPhone: undefined,
+    };
+
+    const dayNumbers = Array.from(
+      new Set(timeSlots.filter((ts) => !ts.is_break).map((ts) => ts.day_of_week))
+    ).sort();
+
+    return {
+      metadata,
+      courses: selectedCourseObjs.length > 0 ? selectedCourseObjs : courses,
+      faculty: selectedFacultyObjs.length > 0 ? selectedFacultyObjs : faculties,
+      rooms: numRooms > 0 ? rooms.slice(0, numRooms) : rooms,
+      sections: selectedSectionObjs,
+      timeSlots: timeSlots,
+      days: dayNumbers.length > 0 ? dayNumbers : [0, 1, 2, 3, 4],
+      entries: [], // Empty before generation
+    };
+  }, [
+    department, semester, selectedCourses, selectedFaculty,
+    numSections, numRooms, courses, faculties, rooms, sections, timeSlots,
+  ]);
+
+  // After generation, build the full timetable data
+  const generatedTimetableData = useMemo(() => {
+    if (!generatedId || phase !== "success" || !result) return null;
+    return null; // Will be fetched separately
+  }, [generatedId, phase, result]);
 
   const handleReset = () => {
     setPhase("form");
@@ -345,6 +371,20 @@ export default function GeneratePage() {
     return "text-red-600";
   };
 
+  // Validation checks
+  const validationChecks = useMemo(() => {
+    const checks: Array<{ label: string; ok: boolean; detail: string }> = [
+      { label: "Courses", ok: selectedCourses.length > 0 || courses.length > 0, detail: `${selectedCourses.length > 0 ? selectedCourses.length : courses.length} course(s) available` },
+      { label: "Faculty", ok: selectedFaculty.length > 0 || faculties.length > 0, detail: `${selectedFaculty.length > 0 ? selectedFaculty.length : faculties.length} faculty member(s)` },
+      { label: "Rooms", ok: rooms.length > 0, detail: `${rooms.length} room(s) configured` },
+      { label: "Sections", ok: sections.length > 0 || numSections > 0, detail: `${sections.length} section(s) defined` },
+      { label: "Time Slots", ok: timeSlots.length > 0, detail: `${timeSlots.length} time slot(s) configured` },
+    ];
+    return checks;
+  }, [selectedCourses, selectedFaculty, rooms, sections, timeSlots, numSections, courses, faculties]);
+
+  const allValid = validationChecks.every((c) => c.ok);
+
   return (
     <AppShell>
       <PageHeader
@@ -363,7 +403,6 @@ export default function GeneratePage() {
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* 1. Department */}
               <div>
                 <label className="label">1. Department</label>
                 <select
@@ -378,7 +417,6 @@ export default function GeneratePage() {
                 </select>
               </div>
 
-              {/* 2. Semester */}
               <div>
                 <label className="label">2. Semester</label>
                 <select
@@ -393,7 +431,6 @@ export default function GeneratePage() {
                 </select>
               </div>
 
-              {/* 3. Subjects (Courses) */}
               <div className="md:col-span-2">
                 <MultiSelect<{ id: number; name: string }>
                   label="3. Subjects (Courses)"
@@ -404,7 +441,6 @@ export default function GeneratePage() {
                 />
               </div>
 
-              {/* 4. Period Time */}
               <div>
                 <label className="label">4. Subject Period Time</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -425,7 +461,6 @@ export default function GeneratePage() {
                 </div>
               </div>
 
-              {/* 5. Faculty */}
               <div className="md:col-span-2">
                 <MultiSelect<{ id: number; name: string }>
                   label="5. Faculty"
@@ -436,7 +471,6 @@ export default function GeneratePage() {
                 />
               </div>
 
-              {/* 6. Number of Sections */}
               <div>
                 <label className="label">6. Number of Sections</label>
                 <input
@@ -449,7 +483,6 @@ export default function GeneratePage() {
                 />
               </div>
 
-              {/* 7. Number of Rooms */}
               <div>
                 <label className="label">7. Number of Required Rooms</label>
                 <input
@@ -463,7 +496,6 @@ export default function GeneratePage() {
               </div>
             </div>
 
-            {/* Algorithm Settings */}
             <div className="border-t border-ink-100 pt-4 space-y-4">
               <h3 className="text-sm font-semibold text-ink-900">Algorithm Settings</h3>
               <div className="flex items-center justify-between p-3 rounded-xl bg-ink-50 border border-ink-100">
@@ -492,23 +524,88 @@ export default function GeneratePage() {
               </div>
             </div>
 
-            <button
-              onClick={handleGenerate}
-              disabled={gen.isPending}
-              className="btn-primary w-full text-base py-3"
-            >
-              {gen.isPending ? (
-                <>
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  Generating Timetable...
-                </>
-              ) : (
-                <>
-                  <Play className="h-5 w-5" />
-                  Generate Timetable
-                </>
-              )}
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={handleValidate}
+                disabled={gen.isPending}
+                className="btn-secondary flex-1 text-base py-3"
+              >
+                <Eye className="h-5 w-5" />
+                Preview &amp; Validate Configuration
+              </button>
+              <button
+                onClick={handleGenerate}
+                disabled={gen.isPending}
+                className="btn-primary flex-1 text-base py-3"
+              >
+                {gen.isPending ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-5 w-5" />
+                    Generate Timetable
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Validating / Preview State */}
+        {phase === "validating" && (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="card border-brand-200 bg-brand-50 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="h-5 w-5 text-brand-600" />
+                <h3 className="font-semibold text-brand-700">Configuration Validation Results</h3>
+              </div>
+              <button onClick={() => setPhase("form")} className="btn-secondary text-xs">
+                Back to Form
+              </button>
+            </div>
+            <div className="space-y-2 text-sm text-brand-700">
+              {validationChecks.map((check, i) => (
+                <p key={i}>
+                  {check.ok ? "✓" : "✗"} {check.label}: {check.detail}
+                </p>
+              ))}
+            </div>
+            {allValid && (
+              <p className="mt-2 text-emerald-700 font-semibold text-sm">✓ All required data is configured. Review preview template below and click Generate Timetable.</p>
+            )}
+          </motion.div>
+        )}
+
+        {/* Pre-Generation Institutional Timetable Preview (Visible in form & validating states) */}
+        {(phase === "form" || phase === "validating") && (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="card p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-ink-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-ink-900 flex items-center gap-2">
+                  <Eye className="h-5 w-5 text-brand-600" />
+                  Institutional Timetable Template Preview
+                </h3>
+                <p className="text-xs text-ink-500">
+                  Pre-generation template layout showing configured time slots, breaks, and legends for selected subjects/faculty.
+                </p>
+              </div>
+              <span className="badge badge-info">Pre-Generation Preview</span>
+            </div>
+
+            <InstitutionalTimetableSheet
+              entries={[]}
+              timeSlots={previewTimetableData.timeSlots}
+              courses={previewTimetableData.courses}
+              faculty={previewTimetableData.faculty}
+              rooms={previewTimetableData.rooms}
+              sections={previewTimetableData.sections}
+              title={department ? `DEPARTMENT OF ${department.toUpperCase()}` : "INSTITUTIONAL TIMETABLE TEMPLATE"}
+              subtitle={`SEMESTER: ${semester || "ALL"} • PRE-GENERATION PREVIEW`}
+              showExportButtons={false}
+            />
           </motion.div>
         )}
 
@@ -532,7 +629,6 @@ export default function GeneratePage() {
           {/* Success State */}
           {phase === "success" && result && (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-              {/* Result Card */}
               <div className={`card border-2 ${result.validation.valid ? "border-emerald-200" : "border-amber-200"}`}>
                 <div className="flex items-start gap-4">
                   {result.validation.valid ? (
@@ -571,74 +667,25 @@ export default function GeneratePage() {
                     {result.filter_summary && (
                       <div className="mt-3 p-3 rounded-lg bg-ink-50 border border-ink-100 text-xs text-ink-600">
                         <strong>Filters applied:</strong> Courses: {result.filter_summary.courses_count} | Sections: {result.filter_summary.sections_count} | Faculty: {result.filter_summary.faculty_count} | Rooms: {result.filter_summary.rooms_count} | Time Slots: {result.filter_summary.time_slots_count}
-                        {result.filter_summary.department && <><br/>Department: {String(result.filter_summary.department)}</>}
-                        {result.filter_summary.semester && <><br/>Semester: {String(result.filter_summary.semester)}</>}
                       </div>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* 6-Day Timetable Preview */}
-              <div className="card overflow-hidden">
-                <div className="px-5 py-4 border-b border-ink-100 flex items-center justify-between">
-                  <h3 className="font-semibold text-ink-900">6-Day Schedule Preview — Subjects × Days</h3>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => setPhase("preview")} className="btn-secondary text-sm">
-                      <Layers className="h-4 w-4" /> View Grid
-                    </button>
-                    <button onClick={handleViewTimetable} className="btn-primary text-sm">
-                      <ArrowRight className="h-4 w-4" /> Full View
-                    </button>
-                  </div>
-                </div>
-                <div className="overflow-x-auto p-4">
-                  <table className="w-full text-xs border-collapse">
-                    <thead>
-                      <tr>
-                        <th className="p-2 text-left text-ink-500 font-medium border-b border-ink-100 sticky left-0 bg-white min-w-[140px]">Subject</th>
-                        {DAYS_SHORT.map((d) => (
-                          <th key={d} className="p-2 text-ink-700 font-semibold border-b border-ink-100 min-w-[110px] text-center">
-                            {d}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {subjects.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="p-8 text-center text-ink-500">No subjects scheduled yet.</td>
-                        </tr>
-                      ) : (
-                        subjects.map((subj) => (
-                          <tr key={subj.id} className="border-b border-ink-50">
-                            <td className="p-2 font-semibold text-ink-900 sticky left-0 bg-white border-r border-ink-100">
-                              <div className="flex items-center gap-2">
-                                <span className={`inline-block h-2 w-2 rounded-full ${subj.is_lab ? "bg-purple-500" : "bg-brand-500"}`} />
-                                {subj.code}
-                              </div>
-                              <p className="text-[10px] font-normal text-ink-500">{subj.name}</p>
-                            </td>
-                            {DAYS.map((day) => {
-                              const val = gridData[String(subj.id)]?.[day] || "";
-                              return (
-                                <td key={day} className="p-1.5 text-center">
-                                  {val ? (
-                                    <div className="rounded-md px-2 py-1 text-[10px] bg-brand-50 border border-brand-100 text-brand-800">
-                                      {val}
-                                    </div>
-                                  ) : (
-                                    <div className="h-8 rounded-md border border-dashed border-ink-100" />
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+              {/* Generated Institutional Timetable */}
+              <div className="card p-4 overflow-hidden">
+                <InstitutionalTimetableSheet
+                  entries={entriesData ?? []}
+                  timeSlots={timeSlots}
+                  courses={courses}
+                  faculty={faculties}
+                  rooms={rooms}
+                  sections={sections}
+                  title="Official Institutional Timetable Schedule"
+                  subtitle={department ? `Department: ${department} • Generated Schedule` : "Generated Schedule"}
+                  showExportButtons={true}
+                />
               </div>
 
               {/* Actions */}
@@ -653,12 +700,61 @@ export default function GeneratePage() {
             </motion.div>
           )}
 
+          {/* Error State */}
           {phase === "error" && (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
               <ErrorState title="Generation Failed" message="An error occurred while generating the timetable." onRetry={() => setPhase("form")} />
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* PRE-GENERATION PREVIEW */}
+        {phase === "form" && (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="card p-4 overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-ink-900 flex items-center gap-2">
+                <Eye className="h-5 w-5 text-brand-600" />
+                Institutional Timetable Preview
+              </h3>
+              <span className="text-xs text-ink-500">
+                Preview updates as you configure options
+              </span>
+            </div>
+
+            {/* Validation Summary */}
+            <div className="mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs">
+              <div className="font-semibold text-ink-700 mb-1">Configuration Validation</div>
+              <div className="flex flex-wrap gap-2">
+                {validationChecks.map((check, i) => (
+                  <span
+                    key={i}
+                    className={`px-2 py-0.5 rounded-full ${check.ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}
+                  >
+                    {check.ok ? "✓" : "✗"} {check.label}
+                  </span>
+                ))}
+              </div>
+              {!allValid && (
+                <p className="mt-1 text-amber-600">Please configure all required fields before generating.</p>
+              )}
+            </div>
+
+            {/* Preview Table */}
+            <div className="overflow-x-auto">
+              <InstitutionalTimetableSheet
+                entries={[]}
+                timeSlots={previewTimetableData.timeSlots}
+                courses={previewTimetableData.courses}
+                faculty={previewTimetableData.faculty}
+                rooms={previewTimetableData.rooms}
+                sections={previewTimetableData.sections}
+                title="Preview — Institutional Timetable"
+                subtitle={department ? `Department: ${department} • Preview` : "Preview — Configure and Generate"}
+                showExportButtons={false}
+              />
+            </div>
+          </motion.div>
+        )}
       </div>
     </AppShell>
   );

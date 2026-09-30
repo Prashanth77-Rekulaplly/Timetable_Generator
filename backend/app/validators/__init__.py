@@ -78,6 +78,12 @@ def assignments_from_timetable_entries(
         course = course_by_id.get(e.course_id)
         section = section_by_id.get(e.section_id)
         room = room_by_id.get(e.room_id)
+        is_lab = bool(
+            (course and getattr(course, "is_lab", False))
+            or e.entry_type == "lab"
+            or (room and room.room_type == "lab")
+        )
+        cap = (section.current_enrollment or 30) if (is_lab and section and section.current_enrollment) else (section.capacity if section else 30)
         result.append(ScheduleAssignment(
             course_id=e.course_id,
             section_id=e.section_id,
@@ -85,8 +91,8 @@ def assignments_from_timetable_entries(
             room_id=e.room_id,
             time_slot_id=e.time_slot_id,
             entry_id=e.id,
-            is_lab=(course.is_lab if course else e.entry_type == "lab"),
+            is_lab=is_lab,
             requires_projector=room.has_projector if room else True,
-            capacity_required=section.capacity if section else 30,
+            capacity_required=cap,
         ))
     return result

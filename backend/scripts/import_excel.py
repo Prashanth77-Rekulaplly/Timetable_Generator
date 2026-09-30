@@ -257,6 +257,11 @@ def import_excel_data(
                     Course.code == code_val
                 ).first()
 
+                is_lab_val = bool(
+                    re.search(r'\b(lab|laboratory|practical|workshop)\b', name_val, re.IGNORECASE)
+                    or re.search(r'\b(lab|laboratory|practical|workshop)\b', code_val, re.IGNORECASE)
+                )
+
                 if not c_obj:
                     c_obj = Course(
                         code=code_val,
@@ -265,15 +270,16 @@ def import_excel_data(
                         semester=sem_val,
                         faculty_id=fac_obj.id if fac_obj else None,
                         credits=3,
-                        default_periods_per_week=3,
+                        default_periods_per_week=2 if is_lab_val else 3,
                         min_periods=1,
-                        is_lab=False,
+                        is_lab=is_lab_val,
                     )
                     db.add(c_obj)
                     db.flush()
                     counts["courses"] += 1
                 else:
                     c_obj.name = name_val
+                    c_obj.is_lab = is_lab_val
                     if fac_obj:
                         c_obj.faculty_id = fac_obj.id
                     db.flush()

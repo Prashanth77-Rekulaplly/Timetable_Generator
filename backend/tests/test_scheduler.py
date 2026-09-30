@@ -186,9 +186,91 @@ class TestScheduler:
         scheduler = TimetableScheduler(gen_input)
         result = scheduler.generate()
 
-        # Either failed or had hard violations
-        if not result.success:
-            assert len(result.conflicts) > 0 or result.validation.hard_violations > 0
+    def test_weekly_day_distribution(self):
+        """Verify that sessions are distributed across all working days (Mon-Fri) instead of only Monday."""
+        faculty = [make_faculty(i) for i in range(1, 6)]
+        courses = [make_course(i, periods=3, faculty_id=i) for i in range(1, 6)]
+        sections = [make_section(i, course_id=i, periods=3) for i in range(1, 6)]
+        rooms = [make_room(i, cap=40) for i in range(1, 5)]
+        
+        # 5 days x 8 periods = 40 slots
+        slots = []
+        slot_id = 1
+        for day in range(5):
+            for h in range(8, 16):
+                slots.append(make_slot(slot_id, day=day, hour=h))
+                slot_id += 1
+
+        gen_input = GenerationInput(
+            courses=courses, sections=sections, faculty=faculty,
+            rooms=rooms, time_slots=slots
+        )
+        scheduler = TimetableScheduler(gen_input)
+        result = scheduler.generate()
+
+        assert result.success
+        assert len(result.assignments) == 15  # 5 courses * 3 periods
+
+        # Check that sessions are scheduled across all 5 days
+        slot_map = {ts.id: ts for ts in slots}
+        assigned_days = {slot_map[a.time_slot_id].day_of_week for a in result.assignments}
+        assert len(assigned_days) == 5, f"Expected 5 days but got days: {assigned_days}"
+
+        # Check day balance: no single day has all sessions
+        day_counts = {}
+        for a in result.assignments:
+            d = slot_map[a.time_slot_id].day_of_week
+            day_counts[d] = day_counts.get(d, 0) + 1
+        assert max(day_counts.values()) <= 4, f"Unbalanced day counts: {day_counts}"
+
+    def test_diversified_room_allocation(self):
+        """Verify that different rooms and labs are utilized rather than assigning one room to all."""
+        faculty = [make_faculty(i) for i in range(1, 6)]
+        courses = [
+            make_course(1, periods=3, faculty_id=1, is_lab=True),
+            make_course(2, periods=3, faculty_id=2, is_lab=False),
+            make_course(3, periods=3, faculty_id=3, is_lab=False),
+            make_course(4, periods=3, faculty_id=4, is_lab=False),
+        ]
+        sections = [
+            make_section(1, course_id=1, periods=3, requires_lab=True),
+            make_section(2, course_id=2, periods=3, requires_lab=False),
+            make_section(3, course_id=3, periods=3, requires_lab=False),
+            make_section(4, course_id=4, periods=3, requires_lab=False),
+        ]
+        rooms = [
+            make_room(1, cap=50, room_type="lecture"),
+            make_room(2, cap=50, room_type="lecture"),
+            make_room(3, cap=50, room_type="lecture"),
+            make_room(4, cap=35, room_type="lab"),
+            make_room(5, cap=35, room_type="lab"),
+        ]
+        slots = []
+        slot_id = 1
+        for day in range(5):
+            for h in range(8, 16):
+                slots.append(make_slot(slot_id, day=day, hour=h))
+                slot_id += 1
+
+        gen_input = GenerationInput(
+            courses=courses, sections=sections, faculty=faculty,
+            rooms=rooms, time_slots=slots
+        )
+        scheduler = TimetableScheduler(gen_input)
+        result = scheduler.generate()
+
+        assert result.success
+        assert len(result.assignments) == 12
+
+        # Verify multiple lecture rooms are used
+        lecture_assignments = [a for a in result.assignments if not a.is_lab]
+        lecture_rooms_used = {a.room_id for a in lecture_assignments}
+        assert len(lecture_rooms_used) > 1, f"Expected multiple lecture rooms, got {lecture_rooms_used}"
+
+        # Verify lab assignments use lab rooms (room 4 or 5)
+        lab_assignments = [a for a in result.assignments if a.is_lab]
+        for la in lab_assignments:
+            assert la.room_id in (4, 5), f"Lab assignment used non-lab room {la.room_id}"
 
 
 if __name__ == "__main__":

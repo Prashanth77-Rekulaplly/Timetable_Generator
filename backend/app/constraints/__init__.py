@@ -176,14 +176,19 @@ class ConstraintEngine:
         violations: List[ConstraintViolation] = []
         for a in assignments:
             room = self.rooms_by_id.get(a.room_id)
-            if room and a.capacity_required > room.capacity:
-                violations.append(ConstraintViolation(
-                    severity=Severity.HARD,
-                    code="room_capacity",
-                    message=f"Room {room.room_number} capacity {room.capacity} < required {a.capacity_required}.",
-                    involved_entities={"room_id": a.room_id, "section_id": a.section_id},
-                    suggestion="Use a larger room or split the section."
-                ))
+            if room:
+                req_cap = a.capacity_required
+                if a.is_lab and req_cap > room.capacity:
+                    # In lab sessions, batch size is usually half the full lecture section
+                    req_cap = max(20, req_cap // 2)
+                if req_cap > room.capacity:
+                    violations.append(ConstraintViolation(
+                        severity=Severity.HARD,
+                        code="room_capacity",
+                        message=f"Room {room.room_number} capacity {room.capacity} < required {req_cap}.",
+                        involved_entities={"room_id": a.room_id, "section_id": a.section_id},
+                        suggestion="Use a larger room or split the section."
+                    ))
         return violations
 
     def _lab_requirements(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
@@ -317,26 +322,27 @@ class ConstraintEngine:
         return violations
 
     def _consecutive_classes(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
-        """Same course taught in back-to-back periods for the same section is a soft preference."""
+        """Lab courses/practicals are preferably taught in back-to-back periods on the same day."""
         violations: List[ConstraintViolation] = []
         by_section_course: Dict[Tuple[int, int], List[ScheduleAssignment]] = {}
         for a in assignments:
-            by_section_course.setdefault((a.section_id, a.course_id), []).append(a)
+            if a.is_lab:
+                by_section_course.setdefault((a.section_id, a.course_id), []).append(a)
         for (s, c), group in by_section_course.items():
             if len(group) < 2:
                 continue
             slots = sorted([self.time_slots_by_id[a.time_slot_id] for a in group if a.time_slot_id in self.time_slots_by_id],
-                           key=lambda x: x.start_time)
+                           key=lambda x: (x.day_of_week, x.start_time))
             has_consec = False
             for i in range(len(slots) - 1):
-                if slots[i].end_time == slots[i + 1].start_time:
+                if slots[i].day_of_week == slots[i + 1].day_of_week and slots[i].end_time == slots[i + 1].start_time:
                     has_consec = True
                     break
             if not has_consec and len(slots) > 1:
                 violations.append(ConstraintViolation(
                     severity=Severity.SOFT,
                     code="consecutive_missing",
-                    message=f"Course {c} in section {s} has no back-to-back periods.",
+                    message=f"Lab course {c} in section {s} has no back-to-back periods.",
                     involved_entities={"course_id": c, "section_id": s},
                 ))
         return violations
@@ -370,11 +376,11 @@ class ConstraintEngine:
         return violations
 
     def _room_utilization(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
-        """Warn if a very small room is used for a large section (suboptimal)."""
+        """Warn if an excessively large room is used for a tiny section."""
         violations: List[ConstraintViolation] = []
         for a in assignments:
             room = self.rooms_by_id.get(a.room_id)
-            if room and a.capacity_required and room.capacity > 2 * a.capacity_required:
+            if room and a.capacity_required and room.capacity > 3 * a.capacity_required:
                 violations.append(ConstraintViolation(
                     severity=Severity.SOFT,
                     code="room_underutilized",

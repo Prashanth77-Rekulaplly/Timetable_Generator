@@ -272,6 +272,57 @@ class TestScheduler:
         for la in lab_assignments:
             assert la.room_id in (4, 5), f"Lab assignment used non-lab room {la.room_id}"
 
+    def test_realistic_cohort_day_spread_and_no_same_day_duplicate(self):
+        """Verify that a cohort taking 6 subjects has diverse daily schedules with no same-day duplicate theory lectures."""
+        faculty = [make_faculty(i) for i in range(1, 5)]
+        courses = [
+            make_course(1, periods=3, faculty_id=1),
+            make_course(2, periods=3, faculty_id=2),
+            make_course(3, periods=3, faculty_id=3),
+            make_course(4, periods=3, faculty_id=4),
+            make_course(5, periods=3, faculty_id=1),
+            make_course(6, periods=3, faculty_id=2),
+        ]
+        for c in courses:
+            c.department_id = 2
+            c.semester = "Semester 3"
+        sections = [make_section(i, course_id=i, periods=3) for i in range(1, 7)]
+        for s in sections:
+            s.section_number = "A"
+
+        rooms = [make_room(i, cap=60, room_type="lecture") for i in range(1, 4)]
+        slots = []
+        slot_id = 1
+        for day in range(5):
+            for h in range(8, 16):
+                slots.append(make_slot(slot_id, day=day, hour=h))
+                slot_id += 1
+
+        gen_input = GenerationInput(
+            courses=courses, sections=sections, faculty=faculty,
+            rooms=rooms, time_slots=slots
+        )
+        scheduler = TimetableScheduler(gen_input)
+        result = scheduler.generate()
+
+        assert result.success
+        assert len(result.assignments) == 18
+
+        # 1. Check no two classes at the same time for this cohort
+        slot_ids = [a.time_slot_id for a in result.assignments]
+        assert len(slot_ids) == len(set(slot_ids)), "Cohort has overlapping classes at the same time slot!"
+
+        # 2. Check each course is distributed on 3 distinct days (no duplicate same day)
+        slot_map = {ts.id: ts for ts in slots}
+        for c_id in range(1, 7):
+            c_days = [slot_map[a.time_slot_id].day_of_week for a in result.assignments if a.course_id == c_id]
+            assert len(c_days) == 3
+            assert len(set(c_days)) == 3, f"Course {c_id} scheduled on duplicate days: {c_days}"
+
+        # 3. Check all faculty are utilized
+        fac_assigned = {a.faculty_id for a in result.assignments}
+        assert fac_assigned == {1, 2, 3, 4}
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -22,6 +22,7 @@ class SessionNode:
     requires_lab: bool
     requires_projector: bool
     capacity: int
+    cohort_key: str = ""
     is_primary: bool = True
     label: str = ""
     # bookkeeping
@@ -97,6 +98,8 @@ class ConflictGraph:
     def _conflict_reason(a: SessionNode, b: SessionNode) -> Optional[str]:
         if a.faculty_id == b.faculty_id:
             return "faculty"
+        if a.cohort_key and b.cohort_key and a.cohort_key == b.cohort_key:
+            return "section"
         if a.section_id == b.section_id:
             return "section"
         # room overlap only matters if same room is forced; we will let the

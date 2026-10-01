@@ -144,10 +144,42 @@ class TimetableScheduler:
         """Create SessionNode for each required class session."""
         sessions: List[SessionNode] = []
 
+        # Map sections by course_id
+        sec_by_course: Dict[int, List[Section]] = {}
+        for s in self.sections:
+            sec_by_course.setdefault(s.course_id, []).append(s)
+
+        # Build course to specialized faculty mapping
+        course_faculty_map: Dict[int, Faculty] = {}
+        used_faculty_ids: Set[int] = set()
+
         for course in self.input.courses:
-            course_sections = [s for s in self.sections if s.course_id == course.id]
+            if course.faculty_id and course.faculty_id in self.faculty_by_id:
+                f_obj = self.faculty_by_id[course.faculty_id]
+                course_faculty_map[course.id] = f_obj
+                used_faculty_ids.add(f_obj.id)
+
+        # Allocate distinct faculty for any unassigned courses
+        available_faculty_pool = [f for f in self.faculty if f.id not in used_faculty_ids]
+        if not available_faculty_pool:
+            available_faculty_pool = list(self.faculty)
+
+        for course_idx, course in enumerate(self.input.courses):
+            if course.id not in course_faculty_map and available_faculty_pool:
+                course_faculty_map[course.id] = available_faculty_pool[course_idx % len(available_faculty_pool)]
+
+        for course in self.input.courses:
+            course_sections = sec_by_course.get(course.id, [])
             if not course_sections:
-                continue
+                default_sec = Section(
+                    id=course.id * 1000 + 1,
+                    course_id=course.id,
+                    section_number="A",
+                    capacity=60,
+                    periods_per_week=course.default_periods_per_week or 3,
+                    requires_lab=bool(course.is_lab),
+                )
+                course_sections = [default_sec]
 
             # Auto-detect lab requirement from course properties or naming
             is_lab_course = bool(
@@ -156,10 +188,15 @@ class TimetableScheduler:
                 or re.search(r'\b(lab|laboratory|practical|workshop)\b', course.code or "", re.IGNORECASE)
             )
 
+            faculty = course_faculty_map.get(course.id)
+            if not faculty:
+                continue
+
             for section in course_sections:
-                faculty = self.faculty_by_id.get(course.faculty_id)
-                if not faculty:
-                    continue
+                dept_id = getattr(course, "department_id", None) or 0
+                sem = getattr(course, "semester", None) or "default"
+                sec_num = getattr(section, "section_number", None) or "A"
+                cohort_key = f"{dept_id}_{sem}_{sec_num}"
 
                 periods = section.periods_per_week or course.default_periods_per_week or 3
                 for i in range(periods):
@@ -172,8 +209,9 @@ class TimetableScheduler:
                         requires_lab=requires_lab,
                         requires_projector=True,
                         capacity=section.capacity or 30,
+                        cohort_key=cohort_key,
                         is_primary=(i == 0),
-                        label=f"{course.code}-{section.section_number}-{i+1}"
+                        label=f"{course.code}-{sec_num}-{i+1}"
                     )
                     sessions.append(node)
         return sessions
@@ -190,6 +228,16 @@ class TimetableScheduler:
         for fac_nodes in by_faculty.values():
             for i, a in enumerate(fac_nodes):
                 for b in fac_nodes[i+1:]:
+                    graph.add_edge(a.id, b.id)
+
+        # Same student cohort cannot have multiple classes at same time
+        by_cohort: Dict[str, List[SessionNode]] = {}
+        for s in sessions:
+            cohort = s.cohort_key if s.cohort_key else str(s.section_id)
+            by_cohort.setdefault(cohort, []).append(s)
+        for cohort_nodes in by_cohort.values():
+            for i, a in enumerate(cohort_nodes):
+                for b in cohort_nodes[i+1:]:
                     graph.add_edge(a.id, b.id)
 
         # Same section cannot have multiple classes at same time
@@ -246,10 +294,11 @@ class TimetableScheduler:
     ) -> Dict[str, int]:
         """
         Map sessions to actual time-slot IDs such that:
-        1. Sessions for each section are distributed evenly across ALL available days (Mon-Fri).
-        2. Multiple periods for the same course are spread across different days of the week.
-        3. Periods within a day for a section are scheduled compactly to minimize idle gaps.
-        4. Faculty availability and non-overlapping constraints are strictly respected.
+        1. For each student cohort, sessions are spread evenly across ALL available days (Mon-Fri).
+        2. In any single day, a cohort has at most 1 lecture of each theory course (no duplicate subjects in a day).
+        3. Every day offers a balanced, diverse rotation of different subjects and faculty.
+        4. Periods within a day are arranged compactly (starting from morning periods) without idle holes.
+        5. Faculty availability and non-overlapping constraints are strictly respected.
         """
         available_slots = [ts for ts in self.input.time_slots if not ts.is_break]
         if not available_slots:
@@ -277,27 +326,29 @@ class TimetableScheduler:
 
         # Track usage
         fac_used: Set[Tuple[int, int]] = set()      # (faculty_id, time_slot_id)
+        cohort_used: Set[Tuple[str, int]] = set()   # (cohort_key, time_slot_id)
         sec_used: Set[Tuple[int, int]] = set()      # (section_id, time_slot_id)
-        section_day_slots: Dict[Tuple[int, int], List[int]] = {}  # (section_id, day) -> list of slot_ids
-        course_day_assigned: Dict[Tuple[int, int, int], int] = {} # (section_id, course_id, day) -> count
+        cohort_day_slots: Dict[Tuple[str, int], List[int]] = {}  # (cohort_key, day) -> list of slot_ids
+        course_day_assigned: Dict[Tuple[str, int, int], int] = {} # (cohort_key, course_id, day) -> count
 
         mapping: Dict[str, int] = {}
 
-        # Group sessions by section
-        by_section: Dict[int, List[SessionNode]] = {}
+        # Group sessions by student cohort
+        by_cohort: Dict[str, List[SessionNode]] = {}
         for s in sessions:
-            by_section.setdefault(s.section_id, []).append(s)
+            cohort = s.cohort_key if s.cohort_key else str(s.section_id)
+            by_cohort.setdefault(cohort, []).append(s)
 
-        for section_idx, (section_id, sec_sessions) in enumerate(by_section.items()):
-            # Group section sessions by course
+        for cohort_idx, (cohort_key, cohort_sessions) in enumerate(by_cohort.items()):
+            # Group cohort sessions by course
             by_course: Dict[int, List[SessionNode]] = {}
-            for s in sec_sessions:
+            for s in cohort_sessions:
                 by_course.setdefault(s.course_id, []).append(s)
 
-            total_sessions = len(sec_sessions)
+            total_sessions = len(cohort_sessions)
             target_per_day = max(1, (total_sessions + num_days - 1) // num_days)
 
-            # Sort courses: lab courses first, then largest periods
+            # Sort courses: lab courses first, then courses with most periods
             sorted_courses = sorted(
                 by_course.keys(),
                 key=lambda c_id: (
@@ -307,40 +358,48 @@ class TimetableScheduler:
                 )
             )
 
-            # For each course, assign its sessions across different days
+            # Assign each course's sessions across distinct days
             for course_offset, c_id in enumerate(sorted_courses):
                 c_sessions = by_course[c_id]
+                is_lab = any(s.requires_lab for s in c_sessions)
 
-                # Generate preferred days permutation for this course
-                day_order = [unique_days[(course_offset + section_idx + step) % num_days] for step in range(num_days)]
+                # Preferred days rotation for this course across the week
+                day_order = [unique_days[(course_offset * 2 + cohort_idx + step) % num_days] for step in range(num_days)]
 
                 for s_idx, session in enumerate(c_sessions):
                     assigned = False
 
-                    # Score candidate days for this session
-                    # Prioritize days with:
-                    # 1. Zero sessions for this course so far (spread across days)
-                    # 2. Total section sessions on that day < target_per_day
+                    # Score candidate days for this session:
+                    # 1. 0 sessions of this course on this day (Strict: max 1 theory lecture per course per day)
+                    # 2. Fewest total cohort sessions scheduled on that day
                     candidate_days = list(day_order)
                     candidate_days.sort(key=lambda d: (
-                        course_day_assigned.get((section_id, c_id, d), 0),
-                        len(section_day_slots.get((section_id, d), [])),
+                        course_day_assigned.get((cohort_key, c_id, d), 0),
+                        len(cohort_day_slots.get((cohort_key, d), [])),
                     ))
 
                     for target_day in candidate_days:
+                        # For theory courses, do not place 2 periods of the same course on the same day if another day is available
+                        if not is_lab and course_day_assigned.get((cohort_key, c_id, target_day), 0) >= 1:
+                            if any(course_day_assigned.get((cohort_key, c_id, d), 0) == 0 for d in candidate_days):
+                                continue
+
                         day_slots = slots_by_day.get(target_day, [])
                         if not day_slots:
                             continue
 
-                        already_used = section_day_slots.get((section_id, target_day), [])
+                        already_used = cohort_day_slots.get((cohort_key, target_day), [])
 
-                        # Sort day slots to encourage compactness (adjacent to existing, or standard order)
+                        # Sort day slots to pack morning periods consecutively:
+                        # Prioritize earliest slot that is adjacent/compact to already used slots, or Slot 1, 2, 3, 4...
                         def slot_sort_key(ts: TimeSlot):
-                            is_used_sec = (section_id, ts.id) in sec_used
+                            is_used_coh = (cohort_key, ts.id) in cohort_used
+                            is_used_sec = (session.section_id, ts.id) in sec_used
                             is_used_fac = (session.faculty_id, ts.id) in fac_used
                             is_unavail = (session.faculty_id, ts.id) in fac_unavail
-                            if is_used_sec or is_used_fac or is_unavail:
-                                return (999, 999)
+                            if is_used_coh or is_used_sec or is_used_fac or is_unavail:
+                                return (999, 999, ts.start_time)
+
                             if already_used:
                                 min_gap = min(abs(ts.id - u_id) for u_id in already_used)
                                 return (0, min_gap, ts.start_time)
@@ -350,7 +409,9 @@ class TimetableScheduler:
                         sorted_slots = sorted(day_slots, key=slot_sort_key)
 
                         for ts in sorted_slots:
-                            if (section_id, ts.id) in sec_used:
+                            if (cohort_key, ts.id) in cohort_used:
+                                continue
+                            if (session.section_id, ts.id) in sec_used:
                                 continue
                             if (session.faculty_id, ts.id) in fac_used:
                                 continue
@@ -359,10 +420,11 @@ class TimetableScheduler:
 
                             # Assign this slot
                             mapping[session.id] = ts.id
-                            sec_used.add((section_id, ts.id))
+                            cohort_used.add((cohort_key, ts.id))
+                            sec_used.add((session.section_id, ts.id))
                             fac_used.add((session.faculty_id, ts.id))
-                            section_day_slots.setdefault((section_id, target_day), []).append(ts.id)
-                            course_day_assigned[(section_id, c_id, target_day)] = course_day_assigned.get((section_id, c_id, target_day), 0) + 1
+                            cohort_day_slots.setdefault((cohort_key, target_day), []).append(ts.id)
+                            course_day_assigned[(cohort_key, c_id, target_day)] = course_day_assigned.get((cohort_key, c_id, target_day), 0) + 1
                             assigned = True
                             break
 
@@ -370,24 +432,28 @@ class TimetableScheduler:
                             break
 
                     if not assigned:
-                        # Fallback: try all non-break slots across all days
+                        # Fallback: scan all available non-break slots across all days
                         for ts in available_slots:
-                            if (section_id, ts.id) in sec_used:
+                            if (cohort_key, ts.id) in cohort_used:
+                                continue
+                            if (session.section_id, ts.id) in sec_used:
                                 continue
                             if (session.faculty_id, ts.id) in fac_used:
                                 continue
                             if (session.faculty_id, ts.id) in fac_unavail:
                                 continue
+
                             mapping[session.id] = ts.id
-                            sec_used.add((section_id, ts.id))
+                            cohort_used.add((cohort_key, ts.id))
+                            sec_used.add((session.section_id, ts.id))
                             fac_used.add((session.faculty_id, ts.id))
-                            section_day_slots.setdefault((section_id, ts.day_of_week), []).append(ts.id)
-                            course_day_assigned[(section_id, c_id, ts.day_of_week)] = course_day_assigned.get((section_id, c_id, ts.day_of_week), 0) + 1
+                            cohort_day_slots.setdefault((cohort_key, ts.day_of_week), []).append(ts.id)
+                            course_day_assigned[(cohort_key, c_id, ts.day_of_week)] = course_day_assigned.get((cohort_key, c_id, ts.day_of_week), 0) + 1
                             assigned = True
                             break
 
                     if not assigned:
-                        # Absolute fallback: assign first available slot
+                        # Absolute fallback
                         color = coloring.coloring.get(session.id, 0)
                         fallback_slot = available_slots[color % len(available_slots)]
                         mapping[session.id] = fallback_slot.id
@@ -399,8 +465,8 @@ class TimetableScheduler:
         """
         Assign rooms to each session, ensuring:
         1. Lab sessions are assigned to dedicated lab premises (Lab 201, Lab 202, Lab 203...).
-        2. Lecture sessions are distributed across all available classrooms (Room 101, Room 102, Room 103...).
-        3. Overall room utilization is balanced across all available rooms and labs.
+        2. Lecture sessions are distributed and balanced across ALL available classrooms (Room 101, Room 102, Room 103, Room 104, Room 105...).
+        3. Overall room utilization is actively diversified across all available rooms.
         4. No two sessions share the same room at the same time slot.
         """
         room_map: Dict[str, int] = {}
@@ -422,6 +488,13 @@ class TimetableScheduler:
             for a in self.input.room_avail
             if not a.is_available
         }
+
+        # Map distinct courses to distinct preferred classrooms from lecture_rooms for rich room variety
+        unique_courses = sorted(list(set(s.course_id for s in sessions if not s.requires_lab)))
+        course_preferred_room: Dict[int, int] = {}
+        for c_idx, c_id in enumerate(unique_courses):
+            pref_r = lecture_rooms[c_idx % len(lecture_rooms)]
+            course_preferred_room[c_id] = pref_r.id
 
         # Global room usage tracker across the whole schedule (for load balancing)
         room_usage: Dict[int, int] = {r.id: 0 for r in self.rooms}
@@ -450,15 +523,25 @@ class TimetableScheduler:
             used_rooms_in_slot: Set[int] = set()
 
             for session in slot_sessions:
-                chosen_room_id = self._find_diversified_room(
-                    session=session,
-                    time_slot_id=ts_id,
-                    used_rooms=used_rooms_in_slot,
-                    room_unavail=room_unavail,
-                    room_usage=room_usage,
-                    lab_rooms=lab_rooms,
-                    lecture_rooms=lecture_rooms,
-                )
+                chosen_room_id: Optional[int] = None
+
+                # For theory lectures: try the course's preferred distinct classroom first
+                if not session.requires_lab:
+                    pref_id = course_preferred_room.get(session.course_id)
+                    if pref_id and pref_id not in used_rooms_in_slot and (pref_id, ts_id) not in room_unavail:
+                        chosen_room_id = pref_id
+
+                # If preferred room is occupied or this is a Lab session, find best diversified room
+                if not chosen_room_id:
+                    chosen_room_id = self._find_diversified_room(
+                        session=session,
+                        time_slot_id=ts_id,
+                        used_rooms=used_rooms_in_slot,
+                        room_unavail=room_unavail,
+                        room_usage=room_usage,
+                        lab_rooms=lab_rooms,
+                        lecture_rooms=lecture_rooms,
+                    )
 
                 if chosen_room_id:
                     room_map[session.id] = chosen_room_id
@@ -565,6 +648,7 @@ class TimetableScheduler:
                 faculty_id=s.faculty_id,
                 room_id=room_map.get(s.id, 0),
                 time_slot_id=time_slot_map.get(s.id, 0),
+                cohort_key=s.cohort_key,
                 is_lab=s.requires_lab,
                 requires_projector=s.requires_projector,
                 capacity_required=s.capacity,

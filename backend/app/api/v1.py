@@ -546,7 +546,9 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
     courses = courses_q.all()
     course_ids = [c.id for c in courses]
 
-    if course_ids:
+    if data.faculty:
+        faculty_q = db.query(Faculty).filter(Faculty.id.in_(data.faculty))
+    elif course_ids:
         sections_q = sections_q.filter(Section.course_id.in_(course_ids))
         assigned_faculty_ids = [c.faculty_id for c in courses if c.faculty_id]
         if assigned_faculty_ids:
@@ -568,15 +570,36 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
             h, m = map(int, data.time_end.split(":"))
             time_slots_q = time_slots_q.filter(TimeSlot.end_time <= dt_time(h, m))
 
-    # Apply num_sections limit
-    if data.num_sections:
-        sections_q = sections_q.limit(data.num_sections)
+    # Apply num_sections per course limit
+    all_matched_sections = sections_q.all() if course_ids else []
+    if data.num_sections and courses:
+        sec_by_course = {}
+        for s in all_matched_sections:
+            sec_by_course.setdefault(s.course_id, []).append(s)
+        sections = []
+        for c in courses:
+            c_secs = sec_by_course.get(c.id, [])
+            if c_secs:
+                c_secs.sort(key=lambda s: s.section_number)
+                sections.extend(c_secs[:data.num_sections])
+            else:
+                for idx in range(data.num_sections):
+                    sec_name = chr(65 + idx)
+                    sections.append(Section(
+                        id=c.id * 1000 + idx + 1,
+                        course_id=c.id,
+                        section_number=sec_name,
+                        capacity=60,
+                        periods_per_week=c.default_periods_per_week or 3,
+                        requires_lab=bool(c.is_lab),
+                    ))
+    else:
+        sections = all_matched_sections
 
     # Apply num_rooms limit
     if data.num_rooms:
         rooms_q = rooms_q.limit(data.num_rooms)
 
-    sections = sections_q.all()
     faculty = faculty_q.all()
     rooms = rooms_q.all()
     time_slots = time_slots_q.all()

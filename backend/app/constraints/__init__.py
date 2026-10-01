@@ -41,6 +41,7 @@ class ScheduleAssignment:
     room_id: int
     time_slot_id: int
     entry_id: Optional[int] = None
+    cohort_key: str = ""
     is_lab: bool = False
     requires_projector: bool = True
     capacity_required: int = 30
@@ -81,6 +82,7 @@ class ConstraintEngine:
         violations.extend(self._no_break_assignment(assignments))
         violations.extend(self._required_periods(assignments))
 
+        violations.extend(self._no_same_course_same_day(assignments))
         violations.extend(self._faculty_preferences(assignments))
         violations.extend(self._faculty_gaps(assignments))
         violations.extend(self._student_gaps(assignments))
@@ -110,17 +112,44 @@ class ConstraintEngine:
 
     def _no_section_overlap(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
         violations: List[ConstraintViolation] = []
-        by_key: Dict[Tuple[int, int], List[ScheduleAssignment]] = {}
+        by_key: Dict[Tuple[str, int], List[ScheduleAssignment]] = {}
         for a in assignments:
-            by_key.setdefault((a.section_id, a.time_slot_id), []).append(a)
+            sec_ident = a.cohort_key if a.cohort_key else str(a.section_id)
+            by_key.setdefault((sec_ident, a.time_slot_id), []).append(a)
         for (s, t), group in by_key.items():
             if len(group) > 1:
                 violations.append(ConstraintViolation(
                     severity=Severity.HARD,
                     code="section_overlap",
                     message=f"Section {s} has multiple classes at time slot {t}.",
-                    involved_entities={"section_id": s, "time_slot_id": t},
+                    involved_entities={"section_id": group[0].section_id, "time_slot_id": t},
                     suggestion="A section cannot be in two places at the same time. Move or merge sessions."
+                ))
+        return violations
+
+    def _no_same_course_same_day(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
+        """Warn if a section has multiple theory lectures for the same subject on the same day."""
+        violations: List[ConstraintViolation] = []
+        by_cohort_course_day: Dict[Tuple[str, int, int], List[ScheduleAssignment]] = {}
+        for a in assignments:
+            if a.is_lab:
+                continue  # lab blocks may span consecutive slots
+            ts = self.time_slots_by_id.get(a.time_slot_id)
+            if not ts:
+                continue
+            cohort = a.cohort_key if a.cohort_key else str(a.section_id)
+            by_cohort_course_day.setdefault((cohort, a.course_id, ts.day_of_week), []).append(a)
+
+        for (cohort, c_id, day), group in by_cohort_course_day.items():
+            if len(group) > 1:
+                course = self.courses_by_id.get(c_id)
+                c_name = course.code if course else str(c_id)
+                violations.append(ConstraintViolation(
+                    severity=Severity.SOFT,
+                    code="same_course_same_day",
+                    message=f"Course {c_name} is scheduled {len(group)} times on day {day} for section {cohort}.",
+                    involved_entities={"course_id": c_id, "day_of_week": day},
+                    suggestion="Distribute multiple lectures of the same course across different days."
                 ))
         return violations
 

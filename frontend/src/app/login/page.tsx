@@ -11,6 +11,7 @@ import { Shield, User, Lock, AlertCircle, Loader2, Sparkles } from "lucide-react
 
 import { login } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
+import { BrandLogoIcon } from "@/components/BrandLogo";
 import type { User as UserType } from "@/lib/types";
 
 const loginSchema = z.object({
@@ -154,15 +155,18 @@ export default function LoginPage() {
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ delay: 0.1, duration: 0.4, ease: "easeOut" }}
-              className="h-14 w-14 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-white flex items-center justify-center shadow-lg shadow-brand-600/30 mb-4"
+              className="relative mb-4"
             >
-              <Shield className="h-7 w-7" strokeWidth={2.25} />
+              <div className="absolute -inset-2 rounded-2xl bg-brand-500/20 blur-lg" />
+              <div className="relative">
+                <BrandLogoIcon size="lg" />
+              </div>
             </motion.div>
             <h1 className="text-2xl font-bold text-ink-900 tracking-tight">
-              Welcome to Schedule Designer
+              Schedule Designer
             </h1>
             <p className="text-sm text-ink-500 mt-1">
-              Sign in to manage your timetables
+              Sign in to manage and generate timetables
             </p>
           </div>
 

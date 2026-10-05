@@ -28,6 +28,8 @@ class GenerationInput:
     section_filter: Optional[List[int]] = None
     room_filter: Optional[List[int]] = None
     faculty_filter: Optional[List[int]] = None
+    existing_assignments: List[ScheduleAssignment] = field(default_factory=list)
+    selected_section: Optional[str] = None
     optimize: bool = True
     max_iterations: int = 100
 
@@ -108,13 +110,15 @@ class TimetableScheduler:
         # 6. Build ScheduleAssignment list
         assignments = self._build_assignments(sessions, time_slot_map, room_map)
 
-        # 7. Validate
-        validation = self.validator.validate(assignments)
+        # 7. Validate combined schedule (new assignments + existing assignments)
+        all_for_validation = self.input.existing_assignments + assignments
+        validation = self.validator.validate(all_for_validation)
 
         # 8. Optimize soft constraints if requested
         if self.input.optimize:
             assignments = self._local_search_optimize(assignments)
-            validation = self.validator.validate(assignments)
+            all_for_validation = self.input.existing_assignments + assignments
+            validation = self.validator.validate(all_for_validation)
 
         # 9. Final validation
         if validation.valid:
@@ -180,6 +184,18 @@ class TimetableScheduler:
                     requires_lab=bool(course.is_lab),
                 )
                 course_sections = [default_sec]
+
+            # If selected_section is specified, filter to only matching section
+            if self.input.selected_section:
+                sel = str(self.input.selected_section).strip().upper()
+                filtered = [
+                    s for s in course_sections
+                    if str(s.section_number).strip().upper() == sel
+                    or f"SECTION {str(s.section_number).strip().upper()}" == sel
+                    or str(s.section_number).strip().upper() == sel.replace("SECTION", "").strip()
+                ]
+                if filtered:
+                    course_sections = filtered
 
             # Auto-detect lab requirement from course properties or naming
             is_lab_course = bool(
@@ -324,11 +340,28 @@ class TimetableScheduler:
             if not a.is_available
         }
 
-        # Track usage
-        fac_used: Set[Tuple[int, int]] = set()      # (faculty_id, time_slot_id)
-        cohort_used: Set[Tuple[str, int]] = set()   # (cohort_key, time_slot_id)
-        sec_used: Set[Tuple[int, int]] = set()      # (section_id, time_slot_id)
+        # Track usage - preloaded from existing_assignments to strictly prevent cross-section faculty and section clashes
+        fac_used: Set[Tuple[int, int]] = {
+            (a.faculty_id, a.time_slot_id)
+            for a in self.input.existing_assignments
+            if a.faculty_id and a.time_slot_id
+        }
+        cohort_used: Set[Tuple[str, int]] = {
+            (a.cohort_key, a.time_slot_id)
+            for a in self.input.existing_assignments
+            if a.cohort_key and a.time_slot_id
+        }
+        sec_used: Set[Tuple[int, int]] = {
+            (a.section_id, a.time_slot_id)
+            for a in self.input.existing_assignments
+            if a.section_id and a.time_slot_id
+        }
         cohort_day_slots: Dict[Tuple[str, int], List[int]] = {}  # (cohort_key, day) -> list of slot_ids
+        for a in self.input.existing_assignments:
+            if a.cohort_key and a.time_slot_id and a.time_slot_id in self.ts_by_id:
+                ts_obj = self.ts_by_id[a.time_slot_id]
+                cohort_day_slots.setdefault((a.cohort_key, ts_obj.day_of_week), []).append(a.time_slot_id)
+
         course_day_assigned: Dict[Tuple[str, int, int], int] = {} # (cohort_key, course_id, day) -> count
 
         mapping: Dict[str, int] = {}
@@ -340,6 +373,22 @@ class TimetableScheduler:
             by_cohort.setdefault(cohort, []).append(s)
 
         for cohort_idx, (cohort_key, cohort_sessions) in enumerate(by_cohort.items()):
+            # Extract section identifier offset (e.g. 'A' -> 0, 'B' -> 1, 'C' -> 2...)
+            sec_letter = ""
+            if cohort_key:
+                parts = cohort_key.split("_")
+                sec_letter = parts[-1].strip().upper()
+
+            if len(sec_letter) == 1 and "A" <= sec_letter <= "Z":
+                sec_offset = ord(sec_letter) - ord("A")
+            elif sec_letter.startswith("SEC-"):
+                try:
+                    sec_offset = int(sec_letter.split("-")[-1]) - 1
+                except Exception:
+                    sec_offset = cohort_idx
+            else:
+                sec_offset = cohort_idx
+
             # Group cohort sessions by course
             by_course: Dict[int, List[SessionNode]] = {}
             for s in cohort_sessions:
@@ -363,8 +412,8 @@ class TimetableScheduler:
                 c_sessions = by_course[c_id]
                 is_lab = any(s.requires_lab for s in c_sessions)
 
-                # Preferred days rotation for this course across the week
-                day_order = [unique_days[(course_offset * 2 + cohort_idx + step) % num_days] for step in range(num_days)]
+                # Preferred days rotation for this course across the week, staggered by section offset
+                day_order = [unique_days[(course_offset * 2 + sec_offset * 2 + step) % num_days] for step in range(num_days)]
 
                 for s_idx, session in enumerate(c_sessions):
                     assigned = False
@@ -390,21 +439,23 @@ class TimetableScheduler:
 
                         already_used = cohort_day_slots.get((cohort_key, target_day), [])
 
-                        # Sort day slots to pack morning periods consecutively:
-                        # Prioritize earliest slot that is adjacent/compact to already used slots, or Slot 1, 2, 3, 4...
+                        # Sort day slots to pack periods and stagger slot selection by section offset to avoid cross-section bottlenecks
                         def slot_sort_key(ts: TimeSlot):
                             is_used_coh = (cohort_key, ts.id) in cohort_used
                             is_used_sec = (session.section_id, ts.id) in sec_used
                             is_used_fac = (session.faculty_id, ts.id) in fac_used
                             is_unavail = (session.faculty_id, ts.id) in fac_unavail
                             if is_used_coh or is_used_sec or is_used_fac or is_unavail:
-                                return (999, 999, ts.start_time)
+                                return (999, 999, 999, ts.start_time)
+
+                            slot_idx_in_day = day_slots.index(ts) if ts in day_slots else 0
+                            stagger_priority = (slot_idx_in_day + sec_offset + course_offset * 2) % len(day_slots)
 
                             if already_used:
                                 min_gap = min(abs(ts.id - u_id) for u_id in already_used)
-                                return (0, min_gap, ts.start_time)
+                                return (0, min_gap, stagger_priority, ts.start_time)
                             else:
-                                return (1, 0, ts.start_time)
+                                return (1, stagger_priority, 0, ts.start_time)
 
                         sorted_slots = sorted(day_slots, key=slot_sort_key)
 
@@ -489,15 +540,13 @@ class TimetableScheduler:
             if not a.is_available
         }
 
-        # Map distinct courses to distinct preferred classrooms from lecture_rooms for rich room variety
         unique_courses = sorted(list(set(s.course_id for s in sessions if not s.requires_lab)))
-        course_preferred_room: Dict[int, int] = {}
-        for c_idx, c_id in enumerate(unique_courses):
-            pref_r = lecture_rooms[c_idx % len(lecture_rooms)]
-            course_preferred_room[c_id] = pref_r.id
 
         # Global room usage tracker across the whole schedule (for load balancing)
         room_usage: Dict[int, int] = {r.id: 0 for r in self.rooms}
+        for a in self.input.existing_assignments:
+            if a.room_id and a.room_id in room_usage:
+                room_usage[a.room_id] += 1
 
         # Group sessions by assigned time slot
         by_time_slot: Dict[int, List[SessionNode]] = {}
@@ -520,16 +569,27 @@ class TimetableScheduler:
             # Assign labs first, then largest capacity
             slot_sessions.sort(key=lambda s: (not s.requires_lab, -s.capacity))
 
-            used_rooms_in_slot: Set[int] = set()
+            # Preload used rooms in this slot from existing_assignments so no room is double-booked across sections
+            used_rooms_in_slot: Set[int] = {
+                a.room_id for a in self.input.existing_assignments
+                if a.time_slot_id == ts_id and a.room_id
+            }
 
             for session in slot_sessions:
                 chosen_room_id: Optional[int] = None
 
-                # For theory lectures: try the course's preferred distinct classroom first
-                if not session.requires_lab:
-                    pref_id = course_preferred_room.get(session.course_id)
-                    if pref_id and pref_id not in used_rooms_in_slot and (pref_id, ts_id) not in room_unavail:
-                        chosen_room_id = pref_id
+                # Extract session section offset for diversified classroom allocation
+                sec_letter = ""
+                if session.cohort_key:
+                    sec_letter = session.cohort_key.split("_")[-1].strip().upper()
+                s_sec_offset = (ord(sec_letter) - ord("A")) if (len(sec_letter) == 1 and "A" <= sec_letter <= "Z") else 0
+
+                # For theory lectures: try the course's preferred distinct classroom first, shifted by section
+                if not session.requires_lab and unique_courses and lecture_rooms:
+                    c_idx = unique_courses.index(session.course_id) if session.course_id in unique_courses else 0
+                    pref_r = lecture_rooms[(c_idx + s_sec_offset) % len(lecture_rooms)]
+                    if pref_r.id not in used_rooms_in_slot and (pref_r.id, ts_id) not in room_unavail:
+                        chosen_room_id = pref_r.id
 
                 # If preferred room is occupied or this is a Lab session, find best diversified room
                 if not chosen_room_id:

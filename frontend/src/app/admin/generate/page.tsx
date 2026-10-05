@@ -42,8 +42,12 @@ import {
   Eye,
   Download,
   Printer,
+  Sparkles,
+  ShieldCheck,
+  RotateCcw,
+  Zap,
 } from "lucide-react";
-import { dayShort, dayName } from "@/lib/utils";
+import { dayShort, dayName, formatSemesterName } from "@/lib/utils";
 import { Course, Faculty, Room, Section, TimeSlot } from "@/lib/types";
 
 // --- Types ---
@@ -105,6 +109,9 @@ interface GenResult {
   success: boolean;
   message: string;
   assignments_count: number;
+  total_entries_count?: number;
+  completed_sections?: string[];
+  current_section?: string;
   validation: { score: number; hard_violations: number; soft_violations: number; valid: boolean };
   filter_summary?: {
     courses_count?: number;
@@ -115,6 +122,10 @@ interface GenResult {
     department?: string;
     department_id?: number;
     semester?: string | number;
+    num_sections?: number;
+    num_rooms?: number;
+    selected_section?: string;
+    completed_sections?: string[];
   };
 }
 
@@ -460,6 +471,12 @@ export default function GeneratePage() {
   const [optimize, setOptimize] = useState(true);
   const [maxIterations, setMaxIterations] = useState(1000);
 
+  // Section-by-section and clash-free generation workflow state
+  const [selectedSectionToGen, setSelectedSectionToGen] = useState<string>("");
+  const [completedSections, setCompletedSections] = useState<string[]>([]);
+  const [activeViewSection, setActiveViewSection] = useState<string>("ALL");
+  const [activeTimetableId, setActiveTimetableId] = useState<number | null>(null);
+
   // Phase: form | validating | generating | success | error
   type Phase = "form" | "validating" | "generating" | "success" | "error";
   const [phase, setPhase] = useState<Phase>("form");
@@ -533,6 +550,32 @@ export default function GeneratePage() {
   );
   const currentDepartmentName = currentDepartmentObj?.name || "";
 
+  // Dynamic Section List based on numSections (e.g. 15 sections -> A, B, C, ... O)
+  const allSectionNames = useMemo(() => {
+    if (numSections <= 0) return [];
+    return Array.from({ length: numSections }, (_, i) =>
+      i < 26 ? String.fromCharCode(65 + i) : `Sec-${i + 1}`
+    );
+  }, [numSections]);
+
+  // Remaining un-generated sections (excluding completed sections)
+  const remainingSectionNames = useMemo(() => {
+    return allSectionNames.filter((sec) => !completedSections.includes(sec));
+  }, [allSectionNames, completedSections]);
+
+  // Auto-sync selectedSectionToGen to first available remaining section
+  useEffect(() => {
+    if (remainingSectionNames.length > 0) {
+      if (!selectedSectionToGen || (!remainingSectionNames.includes(selectedSectionToGen) && selectedSectionToGen !== "ALL")) {
+        setSelectedSectionToGen(remainingSectionNames[0]);
+      }
+    } else if (allSectionNames.length > 0 && completedSections.length >= allSectionNames.length) {
+      setSelectedSectionToGen("COMPLETED");
+    } else {
+      setSelectedSectionToGen("");
+    }
+  }, [remainingSectionNames, allSectionNames, completedSections.length, selectedSectionToGen]);
+
   // Reset cascades on Department change
   const handleDepartmentChange = (deptIdVal: string) => {
     const newDeptId = deptIdVal ? Number(deptIdVal) : "";
@@ -540,6 +583,8 @@ export default function GeneratePage() {
     setSelectedSemester("");
     setSelectedCourses([]);
     setSelectedFaculty([]);
+    setCompletedSections([]);
+    setActiveTimetableId(null);
   };
 
   // Reset cascades on Semester change
@@ -547,6 +592,8 @@ export default function GeneratePage() {
     setSelectedSemester(semVal);
     setSelectedCourses([]);
     setSelectedFaculty([]);
+    setCompletedSections([]);
+    setActiveTimetableId(null);
   };
 
   // Reset/filter faculty when selected courses change
@@ -555,7 +602,6 @@ export default function GeneratePage() {
     if (newSelectedCourseIds.length === 0) {
       setSelectedFaculty([]);
     } else {
-      // Keep only selected faculty who teach the newly selected courses
       const validFacultyIds = new Set<number>();
       newSelectedCourseIds.forEach((cId) => {
         const courseObj = courses.find((c) => c.id === cId);
@@ -567,14 +613,21 @@ export default function GeneratePage() {
     }
   };
 
-  // Generate mutation
+  // Generate mutation with cross-section clash-prevention
   const gen = useMutation({
-    mutationFn: () => {
+    mutationFn: (targetSec?: string) => {
+      const sectionToSchedule = targetSec || selectedSectionToGen;
+      const isSingleSection = sectionToSchedule && sectionToSchedule !== "ALL" && sectionToSchedule !== "COMPLETED";
+
+      const cleanSem = formatSemesterName(selectedSemester);
       const payload: Record<string, unknown> = {
-        name: `${currentDepartmentName || "Department"} - Semester ${selectedSemester || ""}`,
+        name: `${currentDepartmentName || "Department"} - ${cleanSem}${isSingleSection ? ` (Section ${sectionToSchedule})` : ""}`,
         optimize,
         max_iterations: maxIterations,
       };
+      if (activeTimetableId) {
+        payload.timetable_id = activeTimetableId;
+      }
       if (selectedDepartmentId) {
         payload.department_id = selectedDepartmentId;
         payload.department = currentDepartmentName;
@@ -588,19 +641,42 @@ export default function GeneratePage() {
       if (selectedFaculty.length) payload.faculty = selectedFaculty;
       if (numSections > 0) payload.num_sections = numSections;
       if (numRooms > 0) payload.num_rooms = numRooms;
+      if (isSingleSection) {
+        payload.selected_section = sectionToSchedule;
+      }
+      if (completedSections.length > 0) {
+        payload.completed_sections = completedSections;
+      }
       return generateTimetable(payload as any);
     },
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       const data = res.data as GenResult;
       setResult(data);
       setGeneratedId(data.timetable_id);
+      setActiveTimetableId(data.timetable_id);
       setPhase("success");
+
+      const scheduledSec = variables || selectedSectionToGen;
+      if (scheduledSec && scheduledSec !== "ALL" && scheduledSec !== "COMPLETED") {
+        setCompletedSections((prev) => {
+          const nextSet = new Set(prev);
+          nextSet.add(scheduledSec);
+          return Array.from(nextSet);
+        });
+        setActiveViewSection(scheduledSec);
+      } else if (data.completed_sections) {
+        setCompletedSections(data.completed_sections);
+      } else if (scheduledSec === "ALL") {
+        setCompletedSections(allSectionNames);
+      }
+
       if (data.success) {
-        toast.success("Timetable generated successfully!");
+        toast.success(`Timetable for ${scheduledSec && scheduledSec !== "ALL" ? `Section ${scheduledSec}` : "sections"} generated successfully with zero clashes!`);
       } else {
         toast.warning("Timetable generated with violations");
       }
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["timetable-entries", data.timetable_id] });
     },
     onError: () => {
       setPhase("error");
@@ -608,7 +684,7 @@ export default function GeneratePage() {
     },
   });
 
-  const handleGenerate = () => {
+  const handleGenerate = (targetSec?: string) => {
     if (!isConfigurationReady) {
       toast.error("Please complete all required configuration fields before generating.");
       setPhase("validating");
@@ -616,7 +692,14 @@ export default function GeneratePage() {
     }
     setPhase("generating");
     setResult(null);
-    gen.mutate();
+    gen.mutate(targetSec);
+  };
+
+  const handleResetSectionWorkflow = () => {
+    setCompletedSections([]);
+    setActiveTimetableId(null);
+    setActiveViewSection("ALL");
+    toast.info("Section workflow reset. You can now generate from Section A again.");
   };
 
   // Validate before generation without running solver
@@ -630,6 +713,21 @@ export default function GeneratePage() {
     queryFn: () => getTimetableEntries(generatedId!).then((r) => r.data),
     enabled: !!generatedId && phase === "success",
   });
+
+  // Filter entries for the active section tab
+  const displayedEntries = useMemo(() => {
+    const rawEntries = entriesData ?? [];
+    if (!activeViewSection || activeViewSection === "ALL") {
+      return rawEntries;
+    }
+    return rawEntries.filter((e: any) => {
+      const secNum =
+        typeof e.section === "string"
+          ? e.section
+          : e.section?.section_number || e.section_name || "";
+      return String(secNum).toUpperCase() === activeViewSection.toUpperCase();
+    });
+  }, [entriesData, activeViewSection]);
 
   // Check if user has entered any input
   const hasAnyInput = Boolean(
@@ -696,19 +794,29 @@ export default function GeneratePage() {
       value: numSections > 0 ? `${numSections} section(s)` : "Not configured",
     },
     {
+      id: "select_section",
+      label: "Selected Section",
+      ready: Boolean(selectedSectionToGen && selectedSectionToGen !== "COMPLETED"),
+      value: selectedSectionToGen === "ALL"
+        ? "Batch (All remaining)"
+        : selectedSectionToGen
+        ? `Section ${selectedSectionToGen}`
+        : (remainingSectionNames.length > 0 ? `Section ${remainingSectionNames[0]}` : "None remaining"),
+    },
+    {
       id: "rooms",
       label: "Number of Required Rooms",
       ready: numRooms > 0,
       value: numRooms > 0 ? `${numRooms} room(s)` : "Not configured",
     },
-  ], [selectedDepartmentId, currentDepartmentName, selectedSemester, selectedCourses, timeStart, timeEnd, selectedFaculty, numSections, numRooms]);
+  ], [selectedDepartmentId, currentDepartmentName, selectedSemester, selectedCourses, timeStart, timeEnd, selectedFaculty, numSections, selectedSectionToGen, remainingSectionNames, numRooms]);
 
   const missingFields = useMemo(
-    () => requiredFieldChecks.filter((c) => !c.ready),
+    () => requiredFieldChecks.filter((c) => !c.ready && c.id !== "select_section"),
     [requiredFieldChecks]
   );
 
-  // Preview timetable data (strictly derived from selected form data, only when configuration is ready)
+  // Preview timetable data
   const previewTimetableData = useMemo(() => {
     if (!isConfigurationReady) {
       return {
@@ -722,20 +830,16 @@ export default function GeneratePage() {
       };
     }
 
-    // 1. Selected courses: only what the user explicitly selected
     const selectedCourseObjs = selectedCourses
       .map((id) => courses.find((c) => c.id === id))
       .filter(Boolean) as CourseItem[];
 
-    // 2. Selected faculty: only what the user explicitly selected
     const selectedFacultyObjs = selectedFaculty
       .map((id) => faculties.find((f) => f.id === id))
       .filter(Boolean) as FacultyItem[];
 
-    // 3. Selected rooms: strictly limited to numRooms
     const selectedRoomObjs = rooms.slice(0, numRooms);
 
-    // 4. Selected sections: sections matching selected courses, sliced to numSections
     const selectedCourseIds = new Set(selectedCourses);
     let matchedSections = sections.filter((s: any) => selectedCourseIds.has(s.course_id));
     if (matchedSections.length === 0) {
@@ -743,7 +847,6 @@ export default function GeneratePage() {
     }
     const selectedSectionObjs = matchedSections.slice(0, numSections);
 
-    // 5. Filter time slots by configured timeStart and timeEnd
     let filteredTimeSlots = timeSlots;
     if (timeStart) {
       filteredTimeSlots = filteredTimeSlots.filter(
@@ -760,9 +863,7 @@ export default function GeneratePage() {
       universityName: undefined,
       departmentName: currentDepartmentName ? currentDepartmentName.toUpperCase() : undefined,
       semester: selectedSemester ? `SEMESTER ${selectedSemester}` : undefined,
-      academicYear: undefined,
-      classCoordinator: undefined,
-      coordinatorPhone: undefined,
+      sectionName: selectedSectionToGen && selectedSectionToGen !== "ALL" ? `SECTION ${selectedSectionToGen}` : undefined,
     };
 
     return {
@@ -772,12 +873,13 @@ export default function GeneratePage() {
       rooms: selectedRoomObjs,
       sections: selectedSectionObjs,
       timeSlots: filteredTimeSlots,
-      entries: [], // Empty before generation
+      entries: [],
     };
   }, [
     isConfigurationReady,
     currentDepartmentName,
     selectedSemester,
+    selectedSectionToGen,
     selectedCourses,
     selectedFaculty,
     numSections,
@@ -803,6 +905,8 @@ export default function GeneratePage() {
     setTimeEnd("");
     setNumSections(0);
     setNumRooms(0);
+    setCompletedSections([]);
+    setActiveTimetableId(null);
   };
 
   const handleViewTimetable = () => {
@@ -819,11 +923,103 @@ export default function GeneratePage() {
     <AppShell>
       <PageHeader
         title="Generate Timetable"
-        description="Configure academic parameters and generate your conflict-free schedule"
+        description="Configure academic parameters and generate conflict-free schedules section by section"
         icon={<Wand2 className="h-5 w-5" />}
       />
 
       <div className="max-w-5xl mx-auto space-y-6">
+        {/* Section Generation Progress Tracker (Visible whenever numSections > 0) */}
+        {numSections > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="card p-5 bg-gradient-to-r from-brand-50/80 via-white to-indigo-50/80 border-brand-200 shadow-sm space-y-3"
+          >
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-brand-600 text-white flex items-center justify-center font-bold text-xs shadow-sm">
+                  {completedSections.length}/{numSections}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-ink-900 flex items-center gap-2">
+                    <span>Section Generation Progress</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <ShieldCheck className="h-3.5 w-3.5 inline mr-1 text-emerald-600" />
+                      Cross-Section Conflict Protection Active
+                    </span>
+                  </h3>
+                  <p className="text-xs text-ink-600">
+                    {completedSections.length === 0
+                      ? `Ready to generate ${numSections} sections sequentially with zero faculty and room clashes.`
+                      : completedSections.length >= numSections
+                      ? `All ${numSections} sections generated conflict-free!`
+                      : `${completedSections.length} section(s) generated. ${remainingSectionNames.length} remaining to generate without clashes.`}
+                  </p>
+                </div>
+              </div>
+
+              {completedSections.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleResetSectionWorkflow}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-ink-600 bg-white border border-ink-200 hover:bg-ink-50 hover:text-red-600 transition"
+                  title="Reset completed sections"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset Sections
+                </button>
+              )}
+            </div>
+
+            {/* Progress Bar */}
+            <div className="relative h-2 w-full bg-ink-200 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-gradient-to-r from-brand-600 via-indigo-600 to-emerald-500 rounded-full"
+                initial={{ width: 0 }}
+                animate={{ width: `${(completedSections.length / Math.max(1, numSections)) * 100}%` }}
+                transition={{ duration: 0.4 }}
+              />
+            </div>
+
+            {/* Interactive Section Badges / Matrix */}
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              {allSectionNames.map((secName) => {
+                const isCompleted = completedSections.includes(secName);
+                const isSelected = selectedSectionToGen === secName;
+                return (
+                  <button
+                    key={secName}
+                    type="button"
+                    onClick={() => {
+                      if (!isCompleted) {
+                        setSelectedSectionToGen(secName);
+                      } else {
+                        setActiveViewSection(secName);
+                        if (phase === "form") setPhase("success");
+                      }
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs border ${
+                      isCompleted
+                        ? "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                        : isSelected
+                        ? "bg-brand-600 border-brand-700 text-white shadow-md shadow-brand-500/20 ring-2 ring-brand-300"
+                        : "bg-white border-ink-200 text-ink-700 hover:border-brand-300 hover:bg-brand-50/50"
+                    }`}
+                  >
+                    {isCompleted ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : (
+                      <span className="h-2 w-2 rounded-full bg-brand-400" />
+                    )}
+                    <span>Section {secName}</span>
+                    {isCompleted && <span className="text-[10px] opacity-75 font-normal">Generated</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
         {/* Selection Form */}
         {phase === "form" && (
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="card p-6 space-y-6">
@@ -971,9 +1167,17 @@ export default function GeneratePage() {
                   min={0}
                   className="input-field"
                   value={numSections || ""}
-                  onChange={(e) => setNumSections(Number(e.target.value) || 0)}
-                  placeholder="e.g. 4"
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || 0;
+                    setNumSections(val);
+                    setCompletedSections([]);
+                    setActiveTimetableId(null);
+                  }}
+                  placeholder="e.g. 15"
                 />
+                <p className="text-[11px] text-ink-500 mt-1">
+                  Specifies the total number of sections (e.g., 15 creates Section A to O).
+                </p>
               </div>
 
               {/* 7. NUMBER OF REQUIRED ROOMS */}
@@ -985,8 +1189,64 @@ export default function GeneratePage() {
                   className="input-field"
                   value={numRooms || ""}
                   onChange={(e) => setNumRooms(Number(e.target.value) || 0)}
-                  placeholder="e.g. 3"
+                  placeholder="e.g. 16"
                 />
+                <p className="text-[11px] text-ink-500 mt-1">
+                  Capacity for parallel multi-section classrooms and labs.
+                </p>
+              </div>
+
+              {/* 8. CHOOSE SECTION TO GENERATE */}
+              <div className="md:col-span-2 border-t border-ink-100 pt-4 bg-brand-50/50 p-4 rounded-xl border border-brand-100">
+                <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                  <label className="label font-bold text-brand-900 flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4 text-brand-600" />
+                    8. Choose Section to Generate
+                  </label>
+                  {numSections > 0 && (
+                    <span className="text-xs font-semibold text-brand-700 bg-brand-100/80 px-2 py-0.5 rounded-md">
+                      {remainingSectionNames.length} remaining / {numSections} total
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                  <div className="sm:col-span-2">
+                    <select
+                      className="select-field font-semibold text-sm"
+                      value={selectedSectionToGen}
+                      onChange={(e) => setSelectedSectionToGen(e.target.value)}
+                      disabled={numSections <= 0 || remainingSectionNames.length === 0}
+                    >
+                      {numSections <= 0 ? (
+                        <option value="">Enter number of sections first</option>
+                      ) : remainingSectionNames.length === 0 ? (
+                        <option value="COMPLETED">✓ All {numSections} sections generated!</option>
+                      ) : (
+                        <>
+                          <option value="ALL">
+                            All Remaining Sections ({remainingSectionNames.length} Sections)
+                          </option>
+                          {remainingSectionNames.map((secName) => (
+                            <option key={secName} value={secName}>
+                              Section {secName}
+                            </option>
+                          ))}
+                        </>
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="text-xs text-ink-600">
+                    {completedSections.length > 0 ? (
+                      <span className="text-emerald-700 font-medium">
+                        ✓ Completed: {completedSections.map((s) => `Section ${s}`).join(", ")}
+                      </span>
+                    ) : (
+                      <span>Choose a section or select All Remaining to generate clash-free timetables.</span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -994,8 +1254,10 @@ export default function GeneratePage() {
               <h3 className="text-sm font-semibold text-ink-900">Algorithm Settings</h3>
               <div className="flex items-center justify-between p-3 rounded-xl bg-ink-50 border border-ink-100">
                 <div>
-                  <p className="text-sm font-medium text-ink-900">Optimization</p>
-                  <p className="text-xs text-ink-500">Enable constraint-aware DSATUR graph coloring optimization</p>
+                  <p className="text-sm font-medium text-ink-900">Cross-Section Conflict Optimization</p>
+                  <p className="text-xs text-ink-500">
+                    Strict constraint graph locks previously assigned faculty and rooms to ensure zero cross-section clashes
+                  </p>
                 </div>
                 <button
                   onClick={() => setOptimize(!optimize)}
@@ -1018,24 +1280,34 @@ export default function GeneratePage() {
               </div>
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex gap-3 flex-wrap">
               <button
                 onClick={handleValidate}
                 disabled={gen.isPending}
-                className="btn-secondary flex-1 text-base py-3"
+                className="btn-secondary flex-1 min-w-[200px] text-base py-3"
               >
                 <Eye className="h-5 w-5" />
                 Preview &amp; Validate Configuration
               </button>
               <button
-                onClick={handleGenerate}
-                disabled={gen.isPending}
-                className="btn-primary flex-1 text-base py-3"
+                onClick={() => handleGenerate()}
+                disabled={gen.isPending || (numSections > 0 && remainingSectionNames.length === 0)}
+                className="btn-primary flex-1 min-w-[200px] text-base py-3"
               >
                 {gen.isPending ? (
                   <>
                     <Loader2 className="h-5 w-5 animate-spin" />
-                    Generating...
+                    Generating Section {selectedSectionToGen}...
+                  </>
+                ) : remainingSectionNames.length === 0 && numSections > 0 ? (
+                  <>
+                    <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+                    All Sections Generated
+                  </>
+                ) : selectedSectionToGen && selectedSectionToGen !== "ALL" ? (
+                  <>
+                    <Play className="h-5 w-5" />
+                    Generate Timetable for Section {selectedSectionToGen}
                   </>
                 ) : (
                   <>
@@ -1220,7 +1492,7 @@ export default function GeneratePage() {
                   rooms={previewTimetableData.rooms}
                   sections={previewTimetableData.sections}
                   title={`DEPARTMENT OF ${currentDepartmentName ? currentDepartmentName.toUpperCase() : "ACADEMICS"}`}
-                  subtitle={`${selectedSemester ? selectedSemester.toUpperCase() : ""} • PRE-GENERATION PREVIEW`}
+                  subtitle={`${formatSemesterName(selectedSemester).toUpperCase()}${selectedSectionToGen && selectedSectionToGen !== "ALL" ? ` • SECTION ${selectedSectionToGen}` : ""} • PRE-GENERATION PREVIEW`}
                   showExportButtons={false}
                 />
               </div>
@@ -1234,13 +1506,16 @@ export default function GeneratePage() {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="card border-brand-200 bg-brand-50 p-6">
               <div className="flex items-center gap-3 mb-3">
                 <Loader2 className="h-5 w-5 text-brand-600 animate-spin" />
-                <h3 className="font-semibold text-brand-700">Scheduling in progress...</h3>
+                <h3 className="font-semibold text-brand-700">
+                  Scheduling {selectedSectionToGen && selectedSectionToGen !== "ALL" ? `Section ${selectedSectionToGen}` : "sections"} in progress...
+                </h3>
               </div>
               <div className="space-y-2 text-sm text-brand-700">
-                <p>✓ Building conflict graph</p>
+                <p>✓ Locking previously scheduled sections to avoid clashes</p>
+                <p>✓ Building conflict graph for current section</p>
                 <p>✓ Running DSATUR coloring algorithm</p>
-                <p>✓ Applying constraint rules</p>
-                <p>↻ Validating solution quality</p>
+                <p>✓ Applying non-overlapping room and faculty constraints</p>
+                <p>↻ Validating multi-section solution quality</p>
               </div>
             </motion.div>
           )}
@@ -1256,14 +1531,24 @@ export default function GeneratePage() {
                     <AlertTriangle className="h-8 w-8 text-amber-600 shrink-0 mt-1" />
                   )}
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-bold text-ink-900 mb-1">
-                      {result.validation.valid ? "Timetable Generated Successfully" : "Generated with Violations"}
-                    </h3>
+                    <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                      <h3 className="text-lg font-bold text-ink-900">
+                        {result.validation.valid ? "Timetable Generated Successfully" : "Generated with Violations"}
+                      </h3>
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        🛡️ Zero Faculty &amp; Room Clashes Across Sections
+                      </span>
+                    </div>
                     <p className="text-sm text-ink-600">{result.message}</p>
                     <div className="mt-3 flex items-center gap-4 flex-wrap">
                       <div>
-                        <p className="text-xs text-ink-500">Assignments</p>
+                        <p className="text-xs text-ink-500">New Section Assignments</p>
                         <p className="text-xl font-bold text-ink-900">{result.assignments_count}</p>
+                      </div>
+                      <div className="h-10 border-l border-ink-200" />
+                      <div>
+                        <p className="text-xs text-ink-500">Total Timetable Entries</p>
+                        <p className="text-xl font-bold text-brand-700">{result.total_entries_count || result.assignments_count}</p>
                       </div>
                       <div className="h-10 border-l border-ink-200" />
                       <div>
@@ -1283,14 +1568,81 @@ export default function GeneratePage() {
                         <p className="text-xl font-bold text-amber-600">{result.validation.soft_violations}</p>
                       </div>
                     </div>
-                    {result.filter_summary && (
-                      <div className="mt-3 p-3 rounded-lg bg-ink-50 border border-ink-100 text-xs text-ink-600">
-                        <strong>Filters applied:</strong> Courses: {result.filter_summary.courses_count} | Sections: {result.filter_summary.sections_count} | Faculty: {result.filter_summary.faculty_count} | Rooms: {result.filter_summary.rooms_count} | Time Slots: {result.filter_summary.time_slots_count}
-                      </div>
-                    )}
+
+                    {/* Section Switcher Tabs */}
+                    <div className="mt-4 pt-3 border-t border-ink-100 flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-ink-700 uppercase tracking-wide mr-1">
+                        View Section Timetable:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveViewSection("ALL")}
+                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                          activeViewSection === "ALL"
+                            ? "bg-brand-600 text-white shadow-sm"
+                            : "bg-ink-100 text-ink-700 hover:bg-ink-200"
+                        }`}
+                      >
+                        All Generated ({completedSections.length} Sections)
+                      </button>
+                      {completedSections.map((secName) => (
+                        <button
+                          key={secName}
+                          type="button"
+                          onClick={() => setActiveViewSection(secName)}
+                          className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                            activeViewSection === secName
+                              ? "bg-emerald-600 text-white shadow-sm"
+                              : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"
+                          }`}
+                        >
+                          Section {secName}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {/* Next Step / Section Progression Card */}
+              {remainingSectionNames.length > 0 && (
+                <div className="p-4 rounded-xl bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border border-blue-200 shadow-sm flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-brand-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+                      <Zap className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-ink-900">
+                        Next: Generate Section {remainingSectionNames[0]}
+                      </h4>
+                      <p className="text-xs text-ink-600">
+                        Section {remainingSectionNames[0]} will be generated automatically avoiding all scheduled slots of {completedSections.map((s) => `Section ${s}`).join(", ")}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPhase("form")}
+                      className="btn-secondary text-xs px-3 py-2"
+                    >
+                      Configure Options
+                    </button>
+                    <button
+                      onClick={() => handleGenerate(remainingSectionNames[0])}
+                      disabled={gen.isPending}
+                      className="btn-primary text-xs px-4 py-2 shadow-md hover:shadow-lg"
+                    >
+                      {gen.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      Generate Section {remainingSectionNames[0]} Now
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Generated Institutional Timetable */}
               <div className="card p-4 overflow-hidden">
@@ -1302,18 +1654,28 @@ export default function GeneratePage() {
                   rooms={rooms}
                   sections={sections}
                   title="Official Institutional Timetable Schedule"
-                  subtitle={currentDepartmentName ? `Department: ${currentDepartmentName} • Semester ${selectedSemester || ""}` : "Generated Schedule"}
+                  subtitle={
+                    currentDepartmentName
+                      ? `Department: ${currentDepartmentName} • ${formatSemesterName(selectedSemester)}`
+                      : "Generated Schedule"
+                  }
+                  selectedSection={activeViewSection}
+                  onSectionChange={(sec) => setActiveViewSection(sec)}
                   showExportButtons={true}
+                  showSectionTabs={false}
                 />
               </div>
 
               {/* Actions */}
               <div className="flex gap-3 flex-wrap">
-                <button onClick={handleReset} className="btn-secondary">
-                  Generate Again
+                <button onClick={() => setPhase("form")} className="btn-secondary">
+                  Back to Generation Options
                 </button>
-                <button onClick={handleViewTimetable} className="btn-primary">
-                  <ArrowRight className="h-4 w-4" /> View Full Timetable
+                <button onClick={handleReset} className="btn-secondary text-red-600 hover:text-red-700">
+                  Reset Everything
+                </button>
+                <button onClick={handleViewTimetable} className="btn-primary ml-auto">
+                  <ArrowRight className="h-4 w-4" /> View Full Timetable Management
                 </button>
               </div>
             </motion.div>

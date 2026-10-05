@@ -84,6 +84,10 @@ def assignments_from_timetable_entries(
             or (room and room.room_type == "lab")
         )
         cap = (section.current_enrollment or 30) if (is_lab and section and section.current_enrollment) else (section.capacity if section else 30)
+        dept_id = getattr(course, "department_id", 0) if course else 0
+        sem = getattr(course, "semester", "") if course else ""
+        sec_num = getattr(section, "section_number", "") if section else ""
+        cohort_key = f"{dept_id}_{sem}_{sec_num}" if (dept_id or sem or sec_num) else str(e.section_id)
         result.append(ScheduleAssignment(
             course_id=e.course_id,
             section_id=e.section_id,
@@ -91,6 +95,7 @@ def assignments_from_timetable_entries(
             room_id=e.room_id,
             time_slot_id=e.time_slot_id,
             entry_id=e.id,
+            cohort_key=cohort_key,
             is_lab=is_lab,
             requires_projector=room.has_projector if room else True,
             capacity_required=cap,

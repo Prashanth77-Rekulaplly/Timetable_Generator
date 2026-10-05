@@ -160,18 +160,55 @@ export interface ValidationResult {
   };
 }
 
+export interface GenerateTimetableRequest {
+  name?: string;
+  timetable_id?: number;
+  sections?: number[];
+  rooms?: number[];
+  faculty?: number[];
+  courses?: number[];
+  department_id?: number;
+  department?: string;
+  semester?: string | number;
+  time_start?: string;
+  time_end?: string;
+  num_sections?: number;
+  num_rooms?: number;
+  selected_section?: string;
+  completed_sections?: string[];
+  optimize?: boolean;
+  max_iterations?: number;
+}
+
 export interface GenerationResult {
   timetable_id: number;
   success: boolean;
   message: string;
   validation: ValidationResult;
   assignments_count: number;
+  total_entries_count?: number;
+  completed_sections?: string[];
+  current_section?: string;
   conflicts: Array<{
     type: string;
     message?: string;
     session_a?: Record<string, unknown>;
     session_b?: Record<string, unknown>;
   }>;
+  filter_summary?: {
+    courses_count?: number;
+    sections_count?: number;
+    faculty_count?: number;
+    rooms_count?: number;
+    time_slots_count?: number;
+    department?: string;
+    department_id?: number;
+    semester?: string | number;
+    num_sections?: number;
+    num_rooms?: number;
+    selected_section?: string;
+    completed_sections?: string[];
+  };
 }
 
 export interface Analytics {

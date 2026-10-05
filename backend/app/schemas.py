@@ -370,6 +370,8 @@ class GenerateTimetableRequest(BaseModel):
     time_end: Optional[str] = None  # filter time slots end time (HH:MM)
     num_sections: Optional[int] = None  # number of sections to generate for
     num_rooms: Optional[int] = None  # number of rooms required per section
+    selected_section: Optional[str] = None  # specific section to generate (e.g. 'A', 'B', etc.)
+    completed_sections: Optional[List[str]] = None  # list of section identifiers already generated
     optimize: bool = True
     max_iterations: int = 1000
 

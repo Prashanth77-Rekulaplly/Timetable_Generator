@@ -33,7 +33,7 @@ import {
   Building2,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { dayShort, dayName, formatTime, scoreColor } from "@/lib/utils";
 import { Course, Faculty, Room, Section, TimeSlot, TimetableEntry } from "@/lib/types";
 import { InstitutionalTimetableSheet } from "@/components/InstitutionalTimetableSheet";
@@ -97,6 +97,51 @@ export default function TimetableDetailPage() {
     onError: (e: { response?: { data?: { detail?: string } } }) => toast.error("Failed to finalize", e.response?.data?.detail),
   });
 
+  // Build lookup maps
+  const slotMap = useMemo(() => new Map((timeSlots ?? []).map((s) => [s.id, s])), [timeSlots]);
+  const courseMap = useMemo(() => new Map((courses ?? []).map((c) => [c.id, c])), [courses]);
+  const facultyMap = useMemo(() => new Map((faculty ?? []).map((f) => [f.id, f])), [faculty]);
+  const roomMap = useMemo(() => new Map((rooms ?? []).map((r) => [r.id, r])), [rooms]);
+  const sectionMap = useMemo(() => new Map((sections ?? []).map((s) => [s.id, s])), [sections]);
+
+  // Compute unique days/periods
+  const days = useMemo(() => Array.from(new Set((timeSlots ?? []).map((s) => s.day_of_week))).sort(), [timeSlots]);
+  const sortedSlots = useMemo(() => {
+    return [...(timeSlots ?? [])].sort((a, b) => {
+      if (a.day_of_week !== b.day_of_week) return a.day_of_week - b.day_of_week;
+      return String(a.start_time).localeCompare(String(b.start_time));
+    });
+  }, [timeSlots]);
+
+  // Extract distinct sections present in entries
+  const distinctSections = useMemo(() => {
+    const set = new Set<string>();
+    (entries ?? []).forEach((e: any) => {
+      const secNum =
+        typeof e.section === "string"
+          ? e.section
+          : e.section?.section_number || e.section_name || sectionMap.get(e.section_id)?.section_number;
+      if (secNum) set.add(String(secNum).trim().toUpperCase());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [entries, sectionMap]);
+
+  // Clean authoritative display title
+  const displayTitle = useMemo(() => {
+    if (!timetable) return "Timetable";
+    let baseName = timetable.name || "";
+    baseName = baseName.replace(/Semester\s+Semester/gi, "Semester");
+    if (distinctSections.length > 1) {
+      const secPattern = /\(Section\s+[A-Za-z0-9]+\)/i;
+      if (secPattern.test(baseName)) {
+        baseName = baseName.replace(secPattern, `(Sections ${distinctSections.join(", ")})`);
+      } else if (!baseName.includes("Section")) {
+        baseName += ` (Sections ${distinctSections.join(", ")})`;
+      }
+    }
+    return baseName;
+  }, [timetable, distinctSections]);
+
   if (loadingTT) {
     return (
       <AppShell>
@@ -113,25 +158,11 @@ export default function TimetableDetailPage() {
     );
   }
 
-  // Build lookup maps
-  const slotMap = new Map((timeSlots ?? []).map((s) => [s.id, s]));
-  const courseMap = new Map((courses ?? []).map((c) => [c.id, c]));
-  const facultyMap = new Map((faculty ?? []).map((f) => [f.id, f]));
-  const roomMap = new Map((rooms ?? []).map((r) => [r.id, r]));
-  const sectionMap = new Map((sections ?? []).map((s) => [s.id, s]));
-
-  // Compute unique days/periods
-  const days = Array.from(new Set((timeSlots ?? []).map((s) => s.day_of_week))).sort();
-  const sortedSlots = [...(timeSlots ?? [])].sort((a, b) => {
-    if (a.day_of_week !== b.day_of_week) return a.day_of_week - b.day_of_week;
-    return String(a.start_time).localeCompare(String(b.start_time));
-  });
-
   return (
     <AppShell>
       <PageHeader
-        title={timetable.name}
-        description={`Version ${timetable.version} • ${timetable.is_finalized ? "Finalized" : "Draft"}`}
+        title={displayTitle}
+        description={`Version ${timetable.version} • ${timetable.is_finalized ? "Finalized" : "Draft"}${distinctSections.length > 1 ? ` • ${distinctSections.length} Sections Generated` : ""}`}
         icon={<Calendar className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2">
@@ -158,17 +189,22 @@ export default function TimetableDetailPage() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <StatCard
           label="Total Assignments"
           value={entries?.length ?? 0}
           icon={<ListChecks className="h-4 w-4" />}
         />
         <StatCard
+          label="Sections"
+          value={distinctSections.length || 1}
+          icon={<Layers className="h-4 w-4" />}
+          variant="info"
+        />
+        <StatCard
           label="Courses"
           value={new Set((entries ?? []).map((e) => e.course_id)).size}
           icon={<BookOpen className="h-4 w-4" />}
-          variant="info"
         />
         <StatCard
           label="Faculty"
@@ -217,8 +253,10 @@ export default function TimetableDetailPage() {
           faculty={faculty ?? []}
           rooms={rooms ?? []}
           sections={sections ?? []}
-          title={timetable.name}
-          subtitle={`Version ${timetable.version} • Department Schedule`}
+          title={displayTitle}
+          subtitle={`Version ${timetable.version} • Official Department Schedule`}
+          showExportButtons={true}
+          showSectionTabs={true}
         />
       )}
 
@@ -398,8 +436,9 @@ function TimetableGrid({ entries, timeSlots, view, courseMap, facultyMap, roomMa
       groupedByEntity.get(key)!.push(e);
     });
   } else if (view === "section") {
-    entries.forEach((e) => {
-      const key = sectionMap.get(e.section_id)?.section_number || `Sec #${e.section_id}`;
+    entries.forEach((e: any) => {
+      const secNum = sectionMap.get(e.section_id)?.section_number || e.section?.section_number || e.section_name || `#${e.section_id}`;
+      const key = `Section ${secNum}`;
       if (!groupedByEntity.has(key)) groupedByEntity.set(key, []);
       groupedByEntity.get(key)!.push(e);
     });

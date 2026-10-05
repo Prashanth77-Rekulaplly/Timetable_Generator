@@ -570,31 +570,50 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
             h, m = map(int, data.time_end.split(":"))
             time_slots_q = time_slots_q.filter(TimeSlot.end_time <= dt_time(h, m))
 
-    # Apply num_sections per course limit
+    # Apply num_sections and selected_section logic
     all_matched_sections = sections_q.all() if course_ids else []
+    sec_names = [chr(65 + i) if i < 26 else f"Sec-{i+1}" for i in range(data.num_sections or 1)]
+
     if data.num_sections and courses:
-        sec_by_course = {}
-        for s in all_matched_sections:
-            sec_by_course.setdefault(s.course_id, []).append(s)
+        # Determine target section names to schedule in this generation run
+        target_sec_names = sec_names
+        if data.selected_section and data.selected_section.upper() != "ALL":
+            sel_clean = data.selected_section.strip().upper().replace("SECTION", "").strip()
+            matching = [name for name in sec_names if name.upper() == sel_clean or f"SECTION {name.upper()}" == data.selected_section.strip().upper() or name.upper() == data.selected_section.strip().upper()]
+            if matching:
+                target_sec_names = matching
+            else:
+                target_sec_names = [sel_clean if sel_clean else data.selected_section.strip().upper()]
+
         sections = []
         for c in courses:
-            c_secs = sec_by_course.get(c.id, [])
-            if c_secs:
-                c_secs.sort(key=lambda s: s.section_number)
-                sections.extend(c_secs[:data.num_sections])
-            else:
-                for idx in range(data.num_sections):
-                    sec_name = chr(65 + idx)
-                    sections.append(Section(
-                        id=c.id * 1000 + idx + 1,
+            for t_name in target_sec_names:
+                sec_obj = db.query(Section).filter(
+                    Section.course_id == c.id,
+                    Section.section_number == t_name
+                ).first()
+                if not sec_obj:
+                    sec_obj = Section(
                         course_id=c.id,
-                        section_number=sec_name,
+                        section_number=t_name,
                         capacity=60,
                         periods_per_week=c.default_periods_per_week or 3,
                         requires_lab=bool(c.is_lab),
-                    ))
+                    )
+                    db.add(sec_obj)
+                    db.flush()
+                sections.append(sec_obj)
     else:
-        sections = all_matched_sections
+        if data.selected_section and data.selected_section.upper() != "ALL":
+            sel_clean = data.selected_section.strip().upper().replace("SECTION", "").strip()
+            filtered = [
+                s for s in all_matched_sections
+                if str(s.section_number).strip().upper() == sel_clean
+                or str(s.section_number).strip().upper() == data.selected_section.strip().upper()
+            ]
+            sections = filtered if filtered else all_matched_sections
+        else:
+            sections = all_matched_sections
 
     # Apply num_rooms limit
     if data.num_rooms:
@@ -606,6 +625,23 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
     faculty_avail = db.query(FacultyAvailability).all()
     room_avail = db.query(RoomAvailability).all()
     faculty_prefs = db.query(FacultyPreference).all()
+
+    # Load existing assignments from previously generated sections in this timetable to prevent any cross-section clash
+    existing_assignments = []
+    if data.timetable_id:
+        existing_entries = db.query(TimetableEntry).filter(TimetableEntry.timetable_id == data.timetable_id).all()
+        if existing_entries:
+            all_db_courses = db.query(Course).all()
+            all_db_sections = db.query(Section).all()
+            all_db_rooms = db.query(Room).all()
+            all_db_time_slots = db.query(TimeSlot).all()
+            all_db_faculty = db.query(Faculty).all()
+            # If re-generating a section, exclude entries of that section from existing_assignments
+            target_sec_ids = set(s.id for s in sections)
+            kept_entries = [e for e in existing_entries if e.section_id not in target_sec_ids]
+            existing_assignments = assignments_from_timetable_entries(
+                kept_entries, all_db_courses, all_db_sections, all_db_rooms, all_db_time_slots, all_db_faculty
+            )
 
     result = TimetableScheduler(GenerationInput(
         courses=courses,
@@ -619,25 +655,83 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
         section_filter=data.sections,
         room_filter=data.rooms,
         faculty_filter=data.faculty,
+        existing_assignments=existing_assignments,
+        selected_section=data.selected_section,
         optimize=data.optimize,
         max_iterations=data.max_iterations,
     )).generate()
 
-    # Persist the result
-    timetable = Timetable(
-        name=data.name,
-        generated_at=datetime.utcnow(),
-        metadata_json=str({
-            "score": result.validation.score,
-            "hard_violations": result.validation.hard_violations,
-            "soft_violations": result.validation.soft_violations,
-        }),
-    )
-    db.add(timetable)
-    db.commit()
-    db.refresh(timetable)
+    # Track completed sections
+    new_section_names = list({s.section_number for s in sections})
+    prev_completed = data.completed_sections or []
+    completed_set = set(prev_completed)
+    completed_set.update(new_section_names)
+    completed_list = sorted(list(completed_set))
 
-    # Persist entries
+    # Format authoritative timetable name based on department, semester, and sections
+    dept_label = data.department or (courses[0].department.name if courses and getattr(courses[0], 'department', None) else "")
+    if not dept_label and courses and courses[0].department_id:
+        dept_obj = db.query(Department).filter(Department.id == courses[0].department_id).first()
+        if dept_obj:
+            dept_label = dept_obj.name
+    if not dept_label:
+        dept_label = "Department"
+
+    sem_raw = str(data.semester or "").strip()
+    sem_clean = sem_raw if sem_raw.lower().startswith("semester") else (f"Semester {sem_raw}" if sem_raw else "")
+
+    if len(completed_list) == 1:
+        sec_label = f"(Section {completed_list[0]})"
+    elif data.num_sections and len(completed_list) >= data.num_sections:
+        sec_label = f"(All {len(completed_list)} Sections: {', '.join(completed_list)})"
+    else:
+        sec_label = f"(Sections {', '.join(completed_list)})"
+
+    computed_name_parts = [dept_label]
+    if sem_clean:
+        computed_name_parts.append(sem_clean)
+    computed_name = " - ".join(computed_name_parts)
+    if sec_label:
+        computed_name += f" {sec_label}"
+
+    # Determine or reuse timetable
+    timetable = None
+    if data.timetable_id:
+        timetable = db.query(Timetable).filter(Timetable.id == data.timetable_id).first()
+
+    if not timetable:
+        timetable = Timetable(
+            name=computed_name,
+            generated_at=datetime.utcnow(),
+        )
+        db.add(timetable)
+        db.commit()
+        db.refresh(timetable)
+    else:
+        timetable.name = computed_name
+        db.commit()
+
+    import json
+    timetable.metadata_json = json.dumps({
+        "score": result.validation.score,
+        "hard_violations": result.validation.hard_violations,
+        "soft_violations": result.validation.soft_violations,
+        "completed_sections": completed_list,
+        "num_sections": data.num_sections,
+        "selected_section": data.selected_section,
+    })
+    db.commit()
+
+    # If updating an existing timetable, remove old entries for the targeted sections to prevent duplicate entries
+    if data.timetable_id and sections:
+        target_sec_ids = [s.id for s in sections]
+        db.query(TimetableEntry).filter(
+            TimetableEntry.timetable_id == timetable.id,
+            TimetableEntry.section_id.in_(target_sec_ids)
+        ).delete(synchronize_session=False)
+        db.commit()
+
+    # Persist new entries
     for a in result.assignments:
         entry = TimetableEntry(
             timetable_id=timetable.id,
@@ -651,12 +745,17 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
         db.add(entry)
     db.commit()
 
+    total_entries_count = db.query(TimetableEntry).filter(TimetableEntry.timetable_id == timetable.id).count()
+
     return {
         "timetable_id": timetable.id,
         "success": result.success,
         "message": result.message,
         "validation": result.validation.to_dict(),
         "assignments_count": len(result.assignments),
+        "total_entries_count": total_entries_count,
+        "completed_sections": completed_list,
+        "current_section": data.selected_section or (sections[0].section_number if sections else None),
         "conflicts": result.conflicts,
         "filter_summary": {
             "courses_count": len(courses),
@@ -669,6 +768,8 @@ async def generate_timetable(data: GenerateTimetableRequest, db: Session = Depen
             "semester": data.semester,
             "num_sections": data.num_sections,
             "num_rooms": data.num_rooms,
+            "selected_section": data.selected_section,
+            "completed_sections": completed_list,
         }
     }
 

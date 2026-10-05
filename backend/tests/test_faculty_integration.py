@@ -113,3 +113,73 @@ def test_8_generate_timetable_with_dsatur():
     assert gen_res.get("timetable_id") is not None
     assert gen_res.get("assignments_count") > 0
     assert gen_res.get("success") is True
+
+
+def test_9_sequential_section_generation_no_clashes():
+    """TEST 9: Generate Section A, then Section B sequentially -> Section B has valid section data, distinct times, and zero clashes."""
+    depts = client.get("/api/v1/departments").json()
+    ee_dept = next(d for d in depts if d["name"] == "Electrical Engineering")
+    courses_res = client.get(f"/api/v1/courses?department_id={ee_dept['id']}&semester=Semester 5").json()
+    course_ids = [c["id"] for c in courses_res]
+    fac_res = client.get(f"/api/v1/faculty?department_id={ee_dept['id']}").json()
+    fac_ids = [f["id"] for f in fac_res]
+
+    # 1. Generate Section A
+    gen_a_payload = {
+        "name": "Electrical Engineering - Semester Semester 5 (Section A)",
+        "department_id": ee_dept["id"],
+        "semester": "Semester 5",
+        "courses": course_ids,
+        "faculty": fac_ids,
+        "time_start": "08:00",
+        "time_end": "17:00",
+        "num_sections": 15,
+        "num_rooms": 16,
+        "selected_section": "A",
+        "optimize": True,
+    }
+    res_a = client.post("/api/v1/timetable/generate", json=gen_a_payload).json()
+    assert res_a["success"] is True
+    tt_id = res_a["timetable_id"]
+    assert res_a["assignments_count"] == 12
+
+    # 2. Generate Section B into the same timetable
+    gen_b_payload = {
+        "timetable_id": tt_id,
+        "name": "Electrical Engineering - Semester Semester 5 (Section B)",
+        "department_id": ee_dept["id"],
+        "semester": "Semester 5",
+        "courses": course_ids,
+        "faculty": fac_ids,
+        "time_start": "08:00",
+        "time_end": "17:00",
+        "num_sections": 15,
+        "num_rooms": 16,
+        "selected_section": "B",
+        "completed_sections": ["A"],
+        "optimize": True,
+    }
+    res_b = client.post("/api/v1/timetable/generate", json=gen_b_payload).json()
+    assert res_b["success"] is True
+    assert res_b["assignments_count"] == 12
+    assert res_b["total_entries_count"] == 24
+
+    # 3. Query timetable entries
+    entries = client.get(f"/api/v1/timetables/{tt_id}/entries").json()
+    assert len(entries) == 24
+
+    entries_a = [e for e in entries if e.get("section") and e["section"].get("section_number") == "A"]
+    entries_b = [e for e in entries if e.get("section") and e["section"].get("section_number") == "B"]
+    assert len(entries_a) == 12, f"Expected 12 entries for Section A, got {len(entries_a)}"
+    assert len(entries_b) == 12, f"Expected 12 entries for Section B, got {len(entries_b)}"
+
+    # 4. Check zero faculty clashes across Section A and Section B
+    fac_slots_a = {(e["faculty_id"], e["time_slot_id"]) for e in entries_a if e.get("faculty_id")}
+    fac_slots_b = {(e["faculty_id"], e["time_slot_id"]) for e in entries_b if e.get("faculty_id")}
+    assert len(fac_slots_a.intersection(fac_slots_b)) == 0, "Cross-section faculty clash detected!"
+
+    # 5. Check zero room clashes across Section A and Section B
+    room_slots_a = {(e["room_id"], e["time_slot_id"]) for e in entries_a if e.get("room_id")}
+    room_slots_b = {(e["room_id"], e["time_slot_id"]) for e in entries_b if e.get("room_id")}
+    assert len(room_slots_a.intersection(room_slots_b)) == 0, "Cross-section room clash detected!"
+

@@ -323,6 +323,61 @@ class TestScheduler:
         fac_assigned = {a.faculty_id for a in result.assignments}
         assert fac_assigned == {1, 2, 3, 4}
 
+    def test_multi_section_cross_section_clash_free_generation(self):
+        """Test generating Section A, then Section B with existing_assignments, ensuring 0 faculty/room clashes."""
+        faculty = [make_faculty(1), make_faculty(2)]
+        courses = [
+            make_course(1, periods=2, faculty_id=1),
+            make_course(2, periods=2, faculty_id=2),
+        ]
+        sec_a = [
+            make_section(101, course_id=1, periods=2),
+            make_section(102, course_id=2, periods=2),
+        ]
+        for s in sec_a:
+            s.section_number = "A"
+
+        sec_b = [
+            make_section(201, course_id=1, periods=2),
+            make_section(202, course_id=2, periods=2),
+        ]
+        for s in sec_b:
+            s.section_number = "B"
+
+        rooms = [make_room(1, cap=60), make_room(2, cap=60)]
+        slots = [make_slot(i, day=i % 5, hour=8 + (i % 4)) for i in range(1, 21)]
+
+        # 1. Generate Section A
+        input_a = GenerationInput(
+            courses=courses, sections=sec_a, faculty=faculty,
+            rooms=rooms, time_slots=slots, selected_section="A"
+        )
+        res_a = TimetableScheduler(input_a).generate()
+        assert res_a.success
+        assert len(res_a.assignments) == 4
+
+        # 2. Generate Section B with existing assignments of Section A
+        input_b = GenerationInput(
+            courses=courses, sections=sec_b, faculty=faculty,
+            rooms=rooms, time_slots=slots, selected_section="B",
+            existing_assignments=res_a.assignments
+        )
+        res_b = TimetableScheduler(input_b).generate()
+        assert res_b.success
+        assert len(res_b.assignments) == 4
+
+        # 3. Verify zero faculty clashes across Section A and Section B
+        faculty_time_a = {(a.faculty_id, a.time_slot_id) for a in res_a.assignments}
+        faculty_time_b = {(a.faculty_id, a.time_slot_id) for a in res_b.assignments}
+        common_faculty_slots = faculty_time_a.intersection(faculty_time_b)
+        assert len(common_faculty_slots) == 0, f"Faculty clash detected between Section A and Section B: {common_faculty_slots}"
+
+        # 4. Verify zero room clashes across Section A and Section B
+        room_time_a = {(a.room_id, a.time_slot_id) for a in res_a.assignments}
+        room_time_b = {(a.room_id, a.time_slot_id) for a in res_b.assignments}
+        common_room_slots = room_time_a.intersection(room_time_b)
+        assert len(common_room_slots) == 0, f"Room clash detected between Section A and Section B: {common_room_slots}"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

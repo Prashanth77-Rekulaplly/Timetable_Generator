@@ -1,10 +1,18 @@
 """Main FastAPI application entry point."""
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.v1 import router as api_router
-from app.database import init_db, get_db, get_async_db, AsyncSessionLocal, engine
+from app.database import init_db, engine
 from app.config import settings
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+    engine.dispose()
 
 
 def create_app() -> FastAPI:
@@ -14,6 +22,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     # CORS - configure origins appropriately in production
@@ -32,14 +41,6 @@ def create_app() -> FastAPI:
     @app.get("/health", include_in_schema=False)
     async def health():
         return {"status": "ok", "service": "schedule-designer"}
-
-    @app.on_event("startup")
-    async def on_startup():
-        init_db()
-
-    @app.on_event("shutdown")
-    async def on_shutdown():
-        engine.dispose()
 
     return app
 

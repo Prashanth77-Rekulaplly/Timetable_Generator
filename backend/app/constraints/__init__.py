@@ -41,6 +41,7 @@ class ScheduleAssignment:
     room_id: int
     time_slot_id: int
     entry_id: Optional[int] = None
+    cohort_key: str = ""
     is_lab: bool = False
     requires_projector: bool = True
     capacity_required: int = 30
@@ -81,6 +82,7 @@ class ConstraintEngine:
         violations.extend(self._no_break_assignment(assignments))
         violations.extend(self._required_periods(assignments))
 
+        violations.extend(self._no_same_course_same_day(assignments))
         violations.extend(self._faculty_preferences(assignments))
         violations.extend(self._faculty_gaps(assignments))
         violations.extend(self._student_gaps(assignments))
@@ -110,17 +112,44 @@ class ConstraintEngine:
 
     def _no_section_overlap(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
         violations: List[ConstraintViolation] = []
-        by_key: Dict[Tuple[int, int], List[ScheduleAssignment]] = {}
+        by_key: Dict[Tuple[str, int], List[ScheduleAssignment]] = {}
         for a in assignments:
-            by_key.setdefault((a.section_id, a.time_slot_id), []).append(a)
+            sec_ident = a.cohort_key if a.cohort_key else str(a.section_id)
+            by_key.setdefault((sec_ident, a.time_slot_id), []).append(a)
         for (s, t), group in by_key.items():
             if len(group) > 1:
                 violations.append(ConstraintViolation(
                     severity=Severity.HARD,
                     code="section_overlap",
                     message=f"Section {s} has multiple classes at time slot {t}.",
-                    involved_entities={"section_id": s, "time_slot_id": t},
+                    involved_entities={"section_id": group[0].section_id, "time_slot_id": t},
                     suggestion="A section cannot be in two places at the same time. Move or merge sessions."
+                ))
+        return violations
+
+    def _no_same_course_same_day(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
+        """Warn if a section has multiple theory lectures for the same subject on the same day."""
+        violations: List[ConstraintViolation] = []
+        by_cohort_course_day: Dict[Tuple[str, int, int], List[ScheduleAssignment]] = {}
+        for a in assignments:
+            if a.is_lab:
+                continue  # lab blocks may span consecutive slots
+            ts = self.time_slots_by_id.get(a.time_slot_id)
+            if not ts:
+                continue
+            cohort = a.cohort_key if a.cohort_key else str(a.section_id)
+            by_cohort_course_day.setdefault((cohort, a.course_id, ts.day_of_week), []).append(a)
+
+        for (cohort, c_id, day), group in by_cohort_course_day.items():
+            if len(group) > 1:
+                course = self.courses_by_id.get(c_id)
+                c_name = course.code if course else str(c_id)
+                violations.append(ConstraintViolation(
+                    severity=Severity.SOFT,
+                    code="same_course_same_day",
+                    message=f"Course {c_name} is scheduled {len(group)} times on day {day} for section {cohort}.",
+                    involved_entities={"course_id": c_id, "day_of_week": day},
+                    suggestion="Distribute multiple lectures of the same course across different days."
                 ))
         return violations
 
@@ -176,14 +205,19 @@ class ConstraintEngine:
         violations: List[ConstraintViolation] = []
         for a in assignments:
             room = self.rooms_by_id.get(a.room_id)
-            if room and a.capacity_required > room.capacity:
-                violations.append(ConstraintViolation(
-                    severity=Severity.HARD,
-                    code="room_capacity",
-                    message=f"Room {room.room_number} capacity {room.capacity} < required {a.capacity_required}.",
-                    involved_entities={"room_id": a.room_id, "section_id": a.section_id},
-                    suggestion="Use a larger room or split the section."
-                ))
+            if room:
+                req_cap = a.capacity_required
+                if a.is_lab and req_cap > room.capacity:
+                    # In lab sessions, batch size is usually half the full lecture section
+                    req_cap = max(20, req_cap // 2)
+                if req_cap > room.capacity:
+                    violations.append(ConstraintViolation(
+                        severity=Severity.HARD,
+                        code="room_capacity",
+                        message=f"Room {room.room_number} capacity {room.capacity} < required {req_cap}.",
+                        involved_entities={"room_id": a.room_id, "section_id": a.section_id},
+                        suggestion="Use a larger room or split the section."
+                    ))
         return violations
 
     def _lab_requirements(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
@@ -317,26 +351,27 @@ class ConstraintEngine:
         return violations
 
     def _consecutive_classes(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
-        """Same course taught in back-to-back periods for the same section is a soft preference."""
+        """Lab courses/practicals are preferably taught in back-to-back periods on the same day."""
         violations: List[ConstraintViolation] = []
         by_section_course: Dict[Tuple[int, int], List[ScheduleAssignment]] = {}
         for a in assignments:
-            by_section_course.setdefault((a.section_id, a.course_id), []).append(a)
+            if a.is_lab:
+                by_section_course.setdefault((a.section_id, a.course_id), []).append(a)
         for (s, c), group in by_section_course.items():
             if len(group) < 2:
                 continue
             slots = sorted([self.time_slots_by_id[a.time_slot_id] for a in group if a.time_slot_id in self.time_slots_by_id],
-                           key=lambda x: x.start_time)
+                           key=lambda x: (x.day_of_week, x.start_time))
             has_consec = False
             for i in range(len(slots) - 1):
-                if slots[i].end_time == slots[i + 1].start_time:
+                if slots[i].day_of_week == slots[i + 1].day_of_week and slots[i].end_time == slots[i + 1].start_time:
                     has_consec = True
                     break
             if not has_consec and len(slots) > 1:
                 violations.append(ConstraintViolation(
                     severity=Severity.SOFT,
                     code="consecutive_missing",
-                    message=f"Course {c} in section {s} has no back-to-back periods.",
+                    message=f"Lab course {c} in section {s} has no back-to-back periods.",
                     involved_entities={"course_id": c, "section_id": s},
                 ))
         return violations
@@ -370,11 +405,11 @@ class ConstraintEngine:
         return violations
 
     def _room_utilization(self, assignments: List[ScheduleAssignment]) -> List[ConstraintViolation]:
-        """Warn if a very small room is used for a large section (suboptimal)."""
+        """Warn if an excessively large room is used for a tiny section."""
         violations: List[ConstraintViolation] = []
         for a in assignments:
             room = self.rooms_by_id.get(a.room_id)
-            if room and a.capacity_required and room.capacity > 2 * a.capacity_required:
+            if room and a.capacity_required and room.capacity > 3 * a.capacity_required:
                 violations.append(ConstraintViolation(
                     severity=Severity.SOFT,
                     code="room_underutilized",

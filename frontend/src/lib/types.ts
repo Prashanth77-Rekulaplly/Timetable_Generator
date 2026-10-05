@@ -9,10 +9,27 @@ export interface User {
   updated_at?: string;
 }
 
+export interface Department extends Record<string, unknown> {
+  id: number;
+  name: string;
+  code?: string;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SemesterItem {
+  semester: string;
+  label: string;
+}
+
 export interface Faculty extends Record<string, unknown> {
   id: number;
   name: string;
+  initials?: string;
   department?: string;
+  department_id?: number;
+  department_rel?: Department;
   email?: string;
   is_full_time: boolean;
   max_hours_per_week: number;
@@ -25,6 +42,9 @@ export interface Course extends Record<string, unknown> {
   code: string;
   name: string;
   description?: string;
+  department_id?: number;
+  department?: Department;
+  semester?: string;
   credits: number;
   faculty_id?: number;
   faculty?: Faculty;
@@ -140,18 +160,55 @@ export interface ValidationResult {
   };
 }
 
+export interface GenerateTimetableRequest {
+  name?: string;
+  timetable_id?: number;
+  sections?: number[];
+  rooms?: number[];
+  faculty?: number[];
+  courses?: number[];
+  department_id?: number;
+  department?: string;
+  semester?: string | number;
+  time_start?: string;
+  time_end?: string;
+  num_sections?: number;
+  num_rooms?: number;
+  selected_section?: string;
+  completed_sections?: string[];
+  optimize?: boolean;
+  max_iterations?: number;
+}
+
 export interface GenerationResult {
   timetable_id: number;
   success: boolean;
   message: string;
   validation: ValidationResult;
   assignments_count: number;
+  total_entries_count?: number;
+  completed_sections?: string[];
+  current_section?: string;
   conflicts: Array<{
     type: string;
     message?: string;
     session_a?: Record<string, unknown>;
     session_b?: Record<string, unknown>;
   }>;
+  filter_summary?: {
+    courses_count?: number;
+    sections_count?: number;
+    faculty_count?: number;
+    rooms_count?: number;
+    time_slots_count?: number;
+    department?: string;
+    department_id?: number;
+    semester?: string | number;
+    num_sections?: number;
+    num_rooms?: number;
+    selected_section?: string;
+    completed_sections?: string[];
+  };
 }
 
 export interface Analytics {

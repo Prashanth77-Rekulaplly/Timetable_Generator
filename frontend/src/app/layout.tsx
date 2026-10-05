@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   title: "Schedule Designer — Automated Timetable Generator",
   description:
     "An automated timetable generator using graph coloring algorithms",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

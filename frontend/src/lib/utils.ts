@@ -44,3 +44,12 @@ export function getFacultyInitials(name: string | undefined): string {
   return parts.map((p) => p[0].toUpperCase()).join("");
 }
 
+export function formatSemesterName(sem: string | number | undefined | null): string {
+  if (!sem) return "";
+  const s = String(sem).trim();
+  if (s.toLowerCase().startsWith("semester")) {
+    return s;
+  }
+  return `Semester ${s}`;
+}
+

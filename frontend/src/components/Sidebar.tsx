@@ -17,11 +17,11 @@ import {
   GraduationCap,
   Settings,
   LogOut,
-  Shield,
 } from "lucide-react";
 import { useAuthStore } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { BrandLogo } from "@/components/BrandLogo";
 
 interface NavItem {
   label: string;
@@ -62,17 +62,9 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="hidden md:flex md:flex-col w-64 shrink-0 bg-white border-r border-ink-100 h-screen sticky top-0">
-      <div className="px-5 py-5 border-b border-ink-100">
-        <Link href="/dashboard" className="flex items-center gap-2.5 group">
-          <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-glow">
-            <Shield className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <p className="text-base font-bold text-ink-900 leading-tight">Schedule Designer</p>
-            <p className="text-[10px] uppercase tracking-wider text-ink-500 font-medium">Timetable AI</p>
-          </div>
-        </Link>
+    <aside className="hidden md:flex md:flex-col w-64 shrink-0 bg-white border-r border-ink-100 h-screen sticky top-0 shadow-sm">
+      <div className="px-5 py-4 border-b border-ink-100">
+        <BrandLogo href="/dashboard" size="sm" subtitle="Timetable AI" animate />
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">

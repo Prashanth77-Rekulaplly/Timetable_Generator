@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useRef } from "react";
 import {
   Course,
   Faculty,
@@ -10,11 +10,11 @@ import {
   TimetableEntry,
   TimetableData,
 } from "@/lib/types";
-import { getFacultyInitials, dayShort } from "@/lib/utils";
-import { Printer, Download } from "lucide-react";
+import { getFacultyInitials, dayShort, formatSemesterName } from "@/lib/utils";
+import { Printer, Download, Layers, CheckCircle2, Sparkles, FileText, ChevronRight } from "lucide-react";
 import html2canvas from "html2canvas";
 
-interface InstitutionalTimetableSheetProps {
+export interface InstitutionalTimetableSheetProps {
   timetable?: TimetableData;
   entries?: any[];
   timeSlots?: any[];
@@ -25,6 +25,9 @@ interface InstitutionalTimetableSheetProps {
   title?: string;
   subtitle?: string;
   showExportButtons?: boolean;
+  selectedSection?: string;
+  onSectionChange?: (sec: string) => void;
+  showSectionTabs?: boolean;
 }
 
 function resolveInitials(name: string | undefined): string {
@@ -36,7 +39,7 @@ function resolveInitials(name: string | undefined): string {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function TimetableHeader({ metadata }: { metadata: TimetableData["metadata"] }) {
+function TimetableHeader({ metadata }: { metadata?: TimetableData["metadata"] }) {
   if (!metadata) return null;
   const hasContent =
     metadata.universityName ||
@@ -61,7 +64,7 @@ function TimetableHeader({ metadata }: { metadata: TimetableData["metadata"] }) 
         </p>
       )}
       <div className="mt-1 text-xs text-slate-600 space-y-0.5">
-        {metadata.semester && <div>SEMESTER {metadata.semester}</div>}
+        {metadata.semester && <div>{formatSemesterName(metadata.semester).toUpperCase()}</div>}
         {metadata.academicYear && (
           <div>ACADEMIC YEAR {metadata.academicYear}</div>
         )}
@@ -168,68 +171,37 @@ function LabSplitCell({
 }
 
 // ---------------------------------------------------------------------------
-// Main component
+// Single Section Sheet Component
 // ---------------------------------------------------------------------------
 
-export function InstitutionalTimetableSheet({
-  timetable,
-  entries: entriesProp,
-  timeSlots: timeSlotsProp,
-  courses: coursesProp,
-  faculty: facultyProp,
-  rooms: roomsProp,
-  sections: sectionsProp,
+interface SingleSectionSheetProps {
+  sectionName?: string;
+  entries: any[];
+  timeSlots: TimeSlot[];
+  courses: Course[];
+  faculty: Faculty[];
+  rooms: Room[];
+  sections: Section[];
+  title?: string;
+  subtitle?: string;
+  metadata?: TimetableData["metadata"];
+  showExportButtons?: boolean;
+}
+
+function SingleSectionSheet({
+  sectionName,
+  entries,
+  timeSlots,
+  courses,
+  faculty,
+  rooms,
+  sections,
   title,
   subtitle,
+  metadata,
   showExportButtons = true,
-}: InstitutionalTimetableSheetProps) {
-  const metadata = timetable?.metadata ?? {};
-
-  const days: number[] = useMemo(() => {
-    if (timetable?.days?.length) return timetable.days.map((d) => typeof d === "number" ? d : -1);
-    if (timetable?.timeSlots?.length) {
-      const ds = Array.from(new Set((timetable.timeSlots as TimeSlot[]).map((s) => s.day_of_week))).sort();
-      return ds.length ? ds : [0, 1, 2, 3, 4];
-    }
-    if (timeSlotsProp?.length) {
-      const ds = Array.from(new Set(timeSlotsProp.map((s) => s.day_of_week))).sort();
-      return ds.length ? ds : [0, 1, 2, 3, 4];
-    }
-    return [0, 1, 2, 3, 4];
-  }, [timetable?.days, timetable?.timeSlots, timeSlotsProp]);
-
-  const courses: Course[] = timetable?.courses ?? (coursesProp ?? []);
-  const faculty: Faculty[] = timetable?.faculty ?? (facultyProp ?? []);
-  const rooms: Room[] = timetable?.rooms ?? (roomsProp ?? []);
-  const sections: Section[] = timetable?.sections ?? (sectionsProp ?? []);
-  const timeSlots: TimeSlot[] = timetable?.timeSlots ?? (timeSlotsProp ?? []);
-
-  const entries = timetable?.cells
-    ? timetable.cells.map((c) => ({
-        id: 0,
-        timetable_id: 0,
-        course_id: c.courseId ?? 0,
-        section_id: c.sectionId ?? 0,
-        room_id: c.roomId ?? 0,
-        time_slot_id: c.timeSlotId,
-        faculty_id: c.facultyId ?? 0,
-        entry_type: c.type === "LAB" ? "lab" : "class",
-        is_primary: true,
-        course: c.courseCode
-          ? ({ code: c.courseCode, name: c.courseName } as Course)
-          : undefined,
-        section: c.sectionName
-          ? ({ section_number: c.sectionName } as Section)
-          : undefined,
-        room: c.roomName ? ({ room_number: c.roomName } as Room) : undefined,
-        time_slot: c.day
-          ? ({ day_of_week: days[0], start_time: "", end_time: "" } as TimeSlot)
-          : undefined,
-        faculty: c.facultyName
-          ? ({ name: c.facultyName } as Faculty)
-          : undefined,
-      }))
-    : entriesProp ?? [];
+}: SingleSectionSheetProps) {
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   const courseMap = useMemo(
     () => new Map<number, Course>(courses.map((c) => [c.id, c])),
@@ -248,45 +220,70 @@ export function InstitutionalTimetableSheet({
     [sections]
   );
 
+  const days: number[] = useMemo(() => {
+    const daySet = new Set<number>();
+    if (timeSlots?.length) {
+      timeSlots.forEach((s) => typeof s.day_of_week === "number" && daySet.add(s.day_of_week));
+    }
+    if (entries?.length) {
+      entries.forEach((e) => {
+        if (e.time_slot && typeof e.time_slot.day_of_week === "number") {
+          daySet.add(e.time_slot.day_of_week);
+        }
+      });
+    }
+    if (daySet.size === 0) {
+      [0, 1, 2, 3, 4].forEach((d) => daySet.add(d));
+    }
+    return Array.from(daySet).sort((a, b) => a - b);
+  }, [timeSlots, entries]);
+
   const uniqueTimeRanges = useMemo(() => {
-    const sortedSlots = [...timeSlots].sort((a, b) =>
-      String(a.start_time).localeCompare(String(b.start_time))
-    );
-    const seen = new Set<string>();
-    const result: Array<{
+    const allSlots: TimeSlot[] = [...timeSlots];
+    entries.forEach((e) => {
+      if (e.time_slot && e.time_slot.start_time && e.time_slot.end_time) {
+        allSlots.push(e.time_slot as TimeSlot);
+      }
+    });
+
+    const timeMap = new Map<string, {
       startTime: string;
       endTime: string;
       label?: string;
       isBreak: boolean;
       slotsByDay: Map<number, TimeSlot>;
-    }> = [];
+    }>();
 
-    sortedSlots.forEach((slot) => {
+    allSlots.forEach((slot) => {
+      if (!slot.start_time || !slot.end_time) return;
       const startTime = String(slot.start_time).slice(0, 5);
       const endTime = String(slot.end_time).slice(0, 5);
       const key = `${startTime}-${endTime}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      const slotsByDay = new Map<number, TimeSlot>();
-      timeSlots.forEach((ts) => {
-        if (
-          String(ts.start_time).slice(0, 5) === startTime &&
-          String(ts.end_time).slice(0, 5) === endTime
-        ) {
-          slotsByDay.set(ts.day_of_week, ts);
-        }
-      });
-      result.push({
-        startTime,
-        endTime,
-        label: slot.label,
-        isBreak: slot.is_break,
-        slotsByDay,
-      });
+
+      if (!timeMap.has(key)) {
+        timeMap.set(key, {
+          startTime,
+          endTime,
+          label: slot.label,
+          isBreak: !!slot.is_break,
+          slotsByDay: new Map<number, TimeSlot>(),
+        });
+      }
+
+      const item = timeMap.get(key)!;
+      if (slot.is_break) {
+        item.isBreak = true;
+        if (slot.label) item.label = slot.label;
+      }
+      if (typeof slot.day_of_week === "number") {
+        item.slotsByDay.set(slot.day_of_week, slot);
+      }
     });
+
+    const result = Array.from(timeMap.values());
     result.sort((a, b) => a.startTime.localeCompare(b.startTime));
     return result;
-  }, [timeSlots]);
+  }, [timeSlots, entries]);
 
   const legendCourses = useMemo(() => {
     if (entries.length > 0) {
@@ -336,25 +333,28 @@ export function InstitutionalTimetableSheet({
     return faculty;
   }, [entries, faculty, facultyMap]);
 
-  const totalStudents = useMemo(() => {
-    if (!sections || sections.length === 0) return null;
-    const sum = sections.reduce(
-      (acc, s) => acc + (s.capacity || s.current_enrollment || 0),
-      0
+  const currentSectionObj = useMemo(() => {
+    if (!sectionName) return null;
+    return sections.find(
+      (s) => String(s.section_number).trim().toUpperCase() === sectionName.trim().toUpperCase()
     );
-    return sum > 0 ? sum : null;
-  }, [sections]);
+  }, [sections, sectionName]);
+
+  const totalStudents = useMemo(() => {
+    if (currentSectionObj && currentSectionObj.capacity) {
+      return currentSectionObj.capacity;
+    }
+    if (sections && sections.length > 0) {
+      return sections[0].capacity || 60;
+    }
+    return 60;
+  }, [currentSectionObj, sections]);
 
   const labBatchCount = useMemo(() => {
-    if (sections && sections.length > 0) {
-      const totalBatches = sections.reduce((acc, s) => {
-        const batches = (s as any).batches;
-        if (Array.isArray(batches) && batches.length > 0) {
-          return acc + batches.length;
-        }
-        return acc + 1;
-      }, 0);
-      return totalBatches;
+    if (currentSectionObj) {
+      const batches = (currentSectionObj as any).batches;
+      if (Array.isArray(batches) && batches.length > 0) return batches.length;
+      if (currentSectionObj.requires_lab) return 1;
     }
     if (entries.length > 0) {
       const slotCounts = new Map<number, number>();
@@ -364,11 +364,10 @@ export function InstitutionalTimetableSheet({
       const maxConcurrent = Math.max(0, ...Array.from(slotCounts.values()));
       if (maxConcurrent > 0) return maxConcurrent;
     }
-    return 1;
-  }, [sections, entries]);
+    return 0;
+  }, [currentSectionObj, entries]);
 
-  const colSpan = days.length;
-  const sheetRef = React.useRef<HTMLDivElement>(null);
+  const colSpan = days.length > 0 ? days.length : 1;
 
   const handleExportPNG = async () => {
     if (!sheetRef.current) return;
@@ -379,7 +378,8 @@ export function InstitutionalTimetableSheet({
         logging: false,
       });
       const link = document.createElement("a");
-      link.download = `timetable-${Date.now()}.png`;
+      const secTag = sectionName ? `-section-${sectionName}` : "";
+      link.download = `timetable${secTag}-${Date.now()}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     } catch (err) {
@@ -392,30 +392,37 @@ export function InstitutionalTimetableSheet({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="section-sheet-wrapper space-y-3 bg-white rounded-xl border border-slate-200 shadow-sm p-4 print:p-0 print:border-none print:shadow-none">
       {showExportButtons && (
         <div className="flex justify-between items-center print:hidden bg-slate-50 p-3 rounded-lg border border-slate-200">
-          <div>
-            <h3 className="font-semibold text-slate-800 text-sm">
-              Institutional Sheet View
-            </h3>
-            <p className="text-xs text-slate-500">
-              Official university format with legend tables &amp; break rows
-            </p>
+          <div className="flex items-center gap-2">
+            {sectionName && (
+              <span className="px-2.5 py-1 bg-brand-600 text-white font-bold text-xs rounded-md uppercase tracking-wide">
+                Section {sectionName}
+              </span>
+            )}
+            <div>
+              <h3 className="font-semibold text-slate-800 text-sm">
+                {sectionName ? `Section ${sectionName} Timetable Schedule` : "Institutional Timetable Schedule"}
+              </h3>
+              <p className="text-xs text-slate-500">
+                {entries.length} scheduled periods • University Institutional Format
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handleExportPNG}
-              className="px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded-md shadow flex items-center gap-2 transition"
+              className="px-3.5 py-1.5 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded-md shadow flex items-center gap-1.5 transition"
             >
-              <Download className="h-4 w-4" />
+              <Download className="h-3.5 w-3.5" />
               Download PNG
             </button>
             <button
               onClick={handlePrint}
-              className="px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded-md shadow flex items-center gap-2 transition"
+              className="px-3.5 py-1.5 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded-md shadow flex items-center gap-1.5 transition"
             >
-              <Printer className="h-4 w-4" />
+              <Printer className="h-3.5 w-3.5" />
               Print
             </button>
           </div>
@@ -434,7 +441,7 @@ export function InstitutionalTimetableSheet({
               </h2>
             )}
             {subtitle && (
-              <p className="text-xs font-medium text-slate-600 uppercase">
+              <p className="text-xs font-semibold text-slate-700 uppercase">
                 {subtitle}
               </p>
             )}
@@ -460,100 +467,113 @@ export function InstitutionalTimetableSheet({
                   {dayShort(d).toUpperCase()}
                 </th>
               ))}
+              {days.length === 0 && (
+                <th className="border border-slate-800 px-3 py-2 text-center font-bold text-slate-400">
+                  DAYS
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
-            {uniqueTimeRanges.map((trKey, idx) => {
-              const { startTime, endTime, label, isBreak, slotsByDay } = trKey;
-              const timeDisplay = `${startTime} - ${endTime}`;
+            {uniqueTimeRanges.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={Math.max(3, days.length + 2)}
+                  className="border border-slate-800 py-8 text-center text-slate-400 italic text-xs bg-white"
+                >
+                  No time slots configured or matching the selected filters.
+                </td>
+              </tr>
+            ) : (
+              uniqueTimeRanges.map((trKey, idx) => {
+                const { startTime, endTime, label, isBreak, slotsByDay } = trKey;
+                const timeDisplay = `${startTime} - ${endTime}`;
 
-              if (isBreak) {
+                if (isBreak) {
+                  return (
+                    <BreakRow
+                      key={timeDisplay}
+                      label={label || "BREAK"}
+                      timeDisplay={timeDisplay}
+                      colSpan={colSpan}
+                    />
+                  );
+                }
+
+                const currentSrNo = idx + 1;
+
                 return (
-                  <BreakRow
-                    key={timeDisplay}
-                    label={label || "BREAK"}
-                    timeDisplay={timeDisplay}
-                    colSpan={colSpan}
-                  />
-                );
-              }
+                  <tr key={timeDisplay} className="border-b border-slate-800">
+                    <td className="border border-slate-800 px-2 py-2 font-bold text-slate-700 bg-slate-50">
+                      {currentSrNo}
+                    </td>
+                    <td className="border border-slate-800 px-2 py-2 font-semibold text-slate-800 font-mono whitespace-nowrap bg-slate-50">
+                      {timeDisplay}
+                    </td>
+                    {days.map((d) => {
+                      const slotForDay = slotsByDay.get(d);
+                      const cellEntries = entries.filter((e) => {
+                        if (slotForDay && Number(e.time_slot_id) === Number(slotForDay.id)) return true;
+                        if (e.time_slot) {
+                          const matchDay = Number(e.time_slot.day_of_week) === Number(d);
+                          const matchTime = String(e.time_slot.start_time).slice(0, 5) === startTime;
+                          return matchDay && matchTime;
+                        }
+                        return false;
+                      });
 
-              const currentSrNo = idx + 1;
+                      if (cellEntries.length === 0) {
+                        return (
+                          <td
+                            key={d}
+                            className="border border-slate-800 px-2 py-3 bg-white"
+                          />
+                        );
+                      }
 
-              return (
-                <tr key={timeDisplay} className="border-b border-slate-800">
-                  <td className="border border-slate-800 px-2 py-2 font-bold text-slate-700 bg-slate-50">
-                    {currentSrNo}
-                  </td>
-                  <td className="border border-slate-800 px-2 py-2 font-semibold text-slate-800 font-mono whitespace-nowrap bg-slate-50">
-                    {timeDisplay}
-                  </td>
-                  {days.map((d) => {
-                    const slotForDay = slotsByDay.get(d);
-                    const cellEntries = slotForDay
-                      ? entries.filter((e) => {
-                          if (Number(e.time_slot_id) === Number(slotForDay.id)) return true;
-                          if (e.time_slot) {
-                            const matchDay = Number(e.time_slot.day_of_week) === Number(d);
-                            const matchTime = String(e.time_slot.start_time).slice(0, 5) === startTime;
-                            return matchDay && matchTime;
-                          }
-                          return false;
-                        })
-                      : [];
+                      const isLabSlot = cellEntries.some((e) => {
+                        const c = e.course || courseMap.get(Number(e.course_id));
+                        return e.entry_type === "lab" || c?.is_lab;
+                      });
 
-                    if (cellEntries.length === 0) {
+                      if (isLabSlot && cellEntries.length > 1) {
+                        const assignments = cellEntries.map((e, idx) => {
+                          const c = e.course || courseMap.get(Number(e.course_id));
+                          const f = e.faculty || facultyMap.get(Number(e.faculty_id));
+                          const r = e.room || roomMap.get(Number(e.room_id));
+                          const batchLabel = String.fromCharCode(65 + idx);
+                          return {
+                            batch: batchLabel,
+                            courseShortCode: c?.code || c?.name?.slice(0, 5),
+                            facultyInitials: resolveInitials(f?.name),
+                            roomName: r?.room_number || r?.building,
+                          };
+                        });
+                        return (
+                          <LabSplitCell key={d} assignments={assignments} />
+                        );
+                      }
+
+                      const e = cellEntries[0];
+                      const c = e.course || courseMap.get(Number(e.course_id));
+                      const f = e.faculty || facultyMap.get(Number(e.faculty_id));
+                      const r = e.room || roomMap.get(Number(e.room_id));
+                      const initials = resolveInitials(f?.name);
+                      const courseAbbr = c?.code || c?.name?.slice(0, 6);
+
                       return (
-                        <td
+                        <ClassCell
                           key={d}
-                          className="border border-slate-800 px-2 py-3 bg-white"
+                          courseShortCode={courseAbbr}
+                          facultyInitials={initials}
+                          roomName={r?.room_number || r?.building}
                         />
                       );
-                    }
-
-                    const isLabSlot = cellEntries.some((e) => {
-                      const c = e.course || courseMap.get(Number(e.course_id));
-                      return e.entry_type === "lab" || c?.is_lab;
-                    });
-
-                    if (isLabSlot && cellEntries.length > 1) {
-                      const assignments = cellEntries.map((e, idx) => {
-                        const c = e.course || courseMap.get(Number(e.course_id));
-                        const f = e.faculty || facultyMap.get(Number(e.faculty_id));
-                        const r = e.room || roomMap.get(Number(e.room_id));
-                        const batchLabel = String.fromCharCode(65 + idx);
-                        return {
-                          batch: batchLabel,
-                          courseCode: c?.code || c?.name?.slice(0, 5),
-                          courseName: c?.name,
-                          facultyInitials: resolveInitials(f?.name),
-                          roomName: r?.room_number || r?.building,
-                        };
-                      });
-                      return (
-                        <LabSplitCell key={d} assignments={assignments} />
-                      );
-                    }
-
-                    const e = cellEntries[0];
-                    const c = e.course || courseMap.get(Number(e.course_id));
-                    const f = e.faculty || facultyMap.get(Number(e.faculty_id));
-                    const r = e.room || roomMap.get(Number(e.room_id));
-                    const initials = resolveInitials(f?.name);
-                    const courseAbbr = c?.code || c?.name?.slice(0, 6);
-
-                    return (
-                      <ClassCell
-                        key={d}
-                        courseShortCode={courseAbbr}
-                        facultyInitials={initials}
-                        roomName={r?.room_number || r?.building}
-                      />
-                    );
-                  })}
-                </tr>
-              );
-            })}
+                    })}
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
 
@@ -587,6 +607,16 @@ export function InstitutionalTimetableSheet({
                         <td className="p-1 text-slate-800">{c.name}</td>
                       </tr>
                     ))}
+                    {legendCourses.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={3}
+                          className="p-3 text-center text-slate-400 italic text-[11px]"
+                        >
+                          No subjects selected
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -626,7 +656,7 @@ export function InstitutionalTimetableSheet({
                       <tr>
                         <td
                           colSpan={2}
-                          className="p-2 text-center text-slate-400 italic text-[11px]"
+                          className="p-3 text-center text-slate-400 italic text-[11px]"
                         >
                           No specific lab premises mapped
                         </td>
@@ -663,6 +693,16 @@ export function InstitutionalTimetableSheet({
                         <td className="p-1 text-slate-800">{f.name}</td>
                       </tr>
                     ))}
+                    {legendFaculty.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={2}
+                          className="p-3 text-center text-slate-400 italic text-[11px]"
+                        >
+                          No faculty selected
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -671,10 +711,247 @@ export function InstitutionalTimetableSheet({
 
           <div className="bg-slate-100 border-t border-slate-800 px-3 py-1.5 flex justify-between items-center text-xs font-bold text-slate-900">
             <div>TOTAL STUDENTS: {totalStudents !== null ? totalStudents : "—"}</div>
-            <div>LAB BATCH: {String(labBatchCount).padStart(2, "0")}</div>
+            <div>LAB BATCH: {labBatchCount > 0 ? String(labBatchCount).padStart(2, "0") : "—"}</div>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main InstitutionalTimetableSheet Component (Multi-Section Orchestrator)
+// ---------------------------------------------------------------------------
+
+export function InstitutionalTimetableSheet({
+  timetable,
+  entries: entriesProp,
+  timeSlots: timeSlotsProp,
+  courses: coursesProp,
+  faculty: facultyProp,
+  rooms: roomsProp,
+  sections: sectionsProp,
+  title,
+  subtitle,
+  showExportButtons = true,
+  selectedSection: selectedSectionProp,
+  onSectionChange,
+  showSectionTabs = true,
+}: InstitutionalTimetableSheetProps) {
+  const metadata = timetable?.metadata ?? {};
+
+  const courses: Course[] = timetable?.courses ?? (coursesProp ?? []);
+  const faculty: Faculty[] = timetable?.faculty ?? (facultyProp ?? []);
+  const rooms: Room[] = timetable?.rooms ?? (roomsProp ?? []);
+  const sections: Section[] = timetable?.sections ?? (sectionsProp ?? []);
+  const timeSlots: TimeSlot[] = timetable?.timeSlots ?? (timeSlotsProp ?? []);
+
+  const entries = useMemo(() => {
+    if (timetable?.cells) {
+      return timetable.cells.map((c) => ({
+        id: 0,
+        timetable_id: 0,
+        course_id: c.courseId ?? 0,
+        section_id: c.sectionId ?? 0,
+        room_id: c.roomId ?? 0,
+        time_slot_id: c.timeSlotId,
+        faculty_id: c.facultyId ?? 0,
+        entry_type: c.type === "LAB" ? "lab" : "class",
+        is_primary: true,
+        course: c.courseCode
+          ? ({ code: c.courseCode, name: c.courseName } as Course)
+          : undefined,
+        section: c.sectionName
+          ? ({ section_number: c.sectionName } as Section)
+          : undefined,
+        room: c.roomName ? ({ room_number: c.roomName } as Room) : undefined,
+        time_slot: c.day
+          ? ({ day_of_week: 0, start_time: "", end_time: "" } as TimeSlot)
+          : undefined,
+        faculty: c.facultyName
+          ? ({ name: c.facultyName } as Faculty)
+          : undefined,
+      }));
+    }
+    return entriesProp ?? [];
+  }, [timetable?.cells, entriesProp]);
+
+  const sectionMap = useMemo(
+    () => new Map<number, Section>(sections.map((s) => [s.id, s])),
+    [sections]
+  );
+
+  // Group entries by Section
+  const sectionsData = useMemo(() => {
+    const map = new Map<string, any[]>();
+    entries.forEach((e) => {
+      let secName = "";
+      if (typeof e.section === "string") {
+        secName = e.section;
+      } else if (e.section?.section_number) {
+        secName = e.section.section_number;
+      } else if (e.section_name) {
+        secName = e.section_name;
+      } else if (e.section_id && sectionMap.has(Number(e.section_id))) {
+        secName = sectionMap.get(Number(e.section_id))!.section_number;
+      } else {
+        secName = "A";
+      }
+      secName = String(secName).trim().toUpperCase();
+      if (!map.has(secName)) {
+        map.set(secName, []);
+      }
+      map.get(secName)!.push(e);
+    });
+
+    const sortedSecNames = Array.from(map.keys()).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true })
+    );
+
+    return sortedSecNames.map((name) => ({
+      name,
+      entries: map.get(name)!,
+    }));
+  }, [entries, sectionMap]);
+
+  // Active section tab state (controlled by prop if provided, else internal)
+  const [internalActiveSection, setInternalActiveSection] = useState<string>("ALL");
+  const activeSection = selectedSectionProp !== undefined ? selectedSectionProp : internalActiveSection;
+
+  const handleTabClick = (sec: string) => {
+    if (onSectionChange) {
+      onSectionChange(sec);
+    } else {
+      setInternalActiveSection(sec);
+    }
+  };
+
+  const handlePrintAll = () => {
+    window.print();
+  };
+
+  // Base Department and Semester text
+  const deptTitle = useMemo(() => {
+    if (metadata.departmentName) return metadata.departmentName;
+    return "Department";
+  }, [metadata.departmentName]);
+
+  const semText = useMemo(() => {
+    if (metadata.semester) return formatSemesterName(metadata.semester);
+    return "";
+  }, [metadata.semester]);
+
+  // If there are multiple sections present
+  if (sectionsData.length > 1) {
+    const isShowingAll = activeSection === "ALL";
+    const filteredSections = isShowingAll
+      ? sectionsData
+      : sectionsData.filter((s) => s.name.toUpperCase() === activeSection.toUpperCase());
+
+    return (
+      <div className="space-y-6">
+        {/* Multi-Section Switcher Tabs */}
+        {showSectionTabs && (
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 print:hidden flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5 mr-1">
+                <Layers className="h-4 w-4 text-brand-600" />
+                Section Schedules:
+              </span>
+              <button
+                type="button"
+                onClick={() => handleTabClick("ALL")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                  isShowingAll
+                    ? "bg-brand-600 text-white shadow-sm"
+                    : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                All Sections ({sectionsData.length} Sheets)
+              </button>
+              {sectionsData.map((sec) => (
+                <button
+                  key={sec.name}
+                  type="button"
+                  onClick={() => handleTabClick(sec.name)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    activeSection.toUpperCase() === sec.name.toUpperCase()
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"
+                  }`}
+                >
+                  Section {sec.name} ({sec.entries.length} slots)
+                </button>
+              ))}
+            </div>
+
+            {isShowingAll && showExportButtons && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handlePrintAll}
+                  className="px-3.5 py-1.5 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded-md shadow flex items-center gap-1.5 transition"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  Print All Section Sheets
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Section Sheets */}
+        <div className="space-y-8">
+          {(filteredSections.length > 0 ? filteredSections : sectionsData).map((sec) => {
+            const secSubtitle = subtitle
+              ? subtitle.replace(/• Section [A-Z0-9]+/i, "").replace(/• All Generated Sections \([^)]+\)/i, "") + ` • SECTION ${sec.name}`
+              : `${deptTitle} • ${semText} • SECTION ${sec.name}`;
+
+            const secMeta = {
+              ...metadata,
+              sectionName: sec.name,
+            };
+
+            return (
+              <div key={sec.name} className="section-sheet-container print:page-break-after-always">
+                <SingleSectionSheet
+                  sectionName={sec.name}
+                  entries={sec.entries}
+                  timeSlots={timeSlots}
+                  courses={courses}
+                  faculty={faculty}
+                  rooms={rooms}
+                  sections={sections}
+                  title={title || "OFFICIAL INSTITUTIONAL TIMETABLE SCHEDULE"}
+                  subtitle={secSubtitle}
+                  metadata={secMeta}
+                  showExportButtons={showExportButtons}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Single section fallback (either 0 or 1 section in entries)
+  const singleSectionName = sectionsData.length === 1 ? sectionsData[0].name : metadata.sectionName;
+  const singleEntries = sectionsData.length === 1 ? sectionsData[0].entries : entries;
+
+  return (
+    <SingleSectionSheet
+      sectionName={singleSectionName}
+      entries={singleEntries}
+      timeSlots={timeSlots}
+      courses={courses}
+      faculty={faculty}
+      rooms={rooms}
+      sections={sections}
+      title={title || "OFFICIAL INSTITUTIONAL TIMETABLE SCHEDULE"}
+      subtitle={subtitle}
+      metadata={metadata}
+      showExportButtons={showExportButtons}
+    />
   );
 }
